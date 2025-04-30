@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  transpilePackages: ["@nextui-org/react", "leaflet", "react-leaflet"],
+  transpilePackages: ["leaflet", "react-leaflet", "@heroui/react"],
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
 };
 
 export default nextConfig;

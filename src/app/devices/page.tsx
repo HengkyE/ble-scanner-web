@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Card, CardBody, CardHeader, Divider, Button } from "@nextui-org/react";
+import { Card, CardBody, CardHeader, Divider, Button } from "@heroui/react";
 import {
   Table,
   Space,

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
-import { Spinner, Input, Button, Card, CardBody } from "@nextui-org/react";
+import { Spinner, Input, Button, Card, CardBody } from "@heroui/react";
 import DashboardLayout from "@/components/DashboardLayout";
 import supabase, { safeSupabaseOperation } from "@/lib/supabase";
 

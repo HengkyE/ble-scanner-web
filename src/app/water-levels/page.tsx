@@ -1,6 +1,6 @@
-'use client';
+"use client";
 
-import {useState, useEffect} from 'react';
+import { useState, useEffect } from "react";
 import {
   Table,
   TableHeader,
@@ -13,27 +13,27 @@ import {
   Input,
   Card,
   CardBody,
-} from '@nextui-org/react';
-import {format} from 'date-fns';
-import supabase, {safeSupabaseOperation} from '@/lib/supabase';
-import {WaterLevelMeasurement} from '@/types';
-import DashboardLayout from '@/components/DashboardLayout';
-import LineChartComponent from '@/components/LineChart';
+} from "@heroui/react";
+import { format } from "date-fns";
+import supabase, { safeSupabaseOperation } from "@/lib/supabase";
+import { WaterLevelMeasurement } from "@/types";
+import DashboardLayout from "@/components/DashboardLayout";
+import LineChartComponent from "@/components/LineChart";
 
 export default function WaterLevelsPage() {
   const [measurements, setMeasurements] = useState<WaterLevelMeasurement[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [page, setPage] = useState(1);
   const [rowsPerPage, setRowsPerPage] = useState(10);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState("");
   const [chartData, setChartData] = useState({
     labels: [] as string[],
     datasets: [
       {
-        label: 'Water Level (cm)',
+        label: "Water Level (cm)",
         data: [] as number[],
-        borderColor: 'rgb(53, 162, 235)',
-        backgroundColor: 'rgba(53, 162, 235, 0.5)',
+        borderColor: "rgb(53, 162, 235)",
+        backgroundColor: "rgba(53, 162, 235, 0.5)",
       },
     ],
   });
@@ -41,16 +41,16 @@ export default function WaterLevelsPage() {
   const fetchMeasurements = async () => {
     setIsLoading(true);
     try {
-      const {data, error} = await safeSupabaseOperation(() =>
+      const { data, error } = await safeSupabaseOperation(() =>
         supabase
-          .from('water_level_measurements')
-          .select('*')
-          .order('timestamp', {ascending: false})
-          .limit(100),
+          .from("water_level_measurements")
+          .select("*")
+          .order("timestamp", { ascending: false })
+          .limit(100)
       );
 
       if (error) {
-        console.error('Error fetching water level measurements:', error);
+        console.error("Error fetching water level measurements:", error);
         return;
       }
 
@@ -62,43 +62,41 @@ export default function WaterLevelsPage() {
           .filter((m: WaterLevelMeasurement) => m.water_level_cm !== null)
           .sort(
             (a: WaterLevelMeasurement, b: WaterLevelMeasurement) =>
-              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+              new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
           );
 
         const locations = [
-          ...new Set(
-            filteredData.map((m: WaterLevelMeasurement) => m.location_name),
-          ),
+          ...new Set(filteredData.map((m: WaterLevelMeasurement) => m.location_name)),
         ]
           .filter(Boolean)
-          .map(loc => String(loc)) as string[];
+          .map((loc) => String(loc)) as string[];
 
         // Group data by location
         const datasets = locations.map((location, index) => {
           const locationData = filteredData.filter(
-            (m: WaterLevelMeasurement) => m.location_name === location,
+            (m: WaterLevelMeasurement) => m.location_name === location
           );
 
           const colors = [
             {
-              border: 'rgb(53, 162, 235)',
-              background: 'rgba(53, 162, 235, 0.5)',
+              border: "rgb(53, 162, 235)",
+              background: "rgba(53, 162, 235, 0.5)",
             },
             {
-              border: 'rgb(255, 99, 132)',
-              background: 'rgba(255, 99, 132, 0.5)',
+              border: "rgb(255, 99, 132)",
+              background: "rgba(255, 99, 132, 0.5)",
             },
             {
-              border: 'rgb(75, 192, 192)',
-              background: 'rgba(75, 192, 192, 0.5)',
+              border: "rgb(75, 192, 192)",
+              background: "rgba(75, 192, 192, 0.5)",
             },
             {
-              border: 'rgb(255, 206, 86)',
-              background: 'rgba(255, 206, 86, 0.5)',
+              border: "rgb(255, 206, 86)",
+              background: "rgba(255, 206, 86, 0.5)",
             },
             {
-              border: 'rgb(153, 102, 255)',
-              background: 'rgba(153, 102, 255, 0.5)',
+              border: "rgb(153, 102, 255)",
+              background: "rgba(153, 102, 255, 0.5)",
             },
           ];
 
@@ -106,9 +104,7 @@ export default function WaterLevelsPage() {
 
           return {
             label: location,
-            data: locationData.map(
-              (m: WaterLevelMeasurement) => m.water_level_cm || 0,
-            ),
+            data: locationData.map((m: WaterLevelMeasurement) => m.water_level_cm || 0),
             borderColor: colors[colorIndex].border,
             backgroundColor: colors[colorIndex].background,
           };
@@ -119,9 +115,9 @@ export default function WaterLevelsPage() {
             filteredData.map((m: WaterLevelMeasurement) => {
               const date = new Date(m.timestamp);
               return `${date.getMonth() + 1}/${date.getDate()}`;
-            }),
+            })
           ),
-        ].map(item => String(item));
+        ].map((item) => String(item));
 
         setChartData({
           labels,
@@ -129,7 +125,7 @@ export default function WaterLevelsPage() {
         });
       }
     } catch (error) {
-      console.error('Error in fetchMeasurements:', error);
+      console.error("Error in fetchMeasurements:", error);
     } finally {
       setIsLoading(false);
     }
@@ -140,13 +136,12 @@ export default function WaterLevelsPage() {
   }, []);
 
   // Filter measurements based on search term
-  const filteredMeasurements = measurements.filter(measurement => {
+  const filteredMeasurements = measurements.filter((measurement) => {
     const searchLower = searchTerm.toLowerCase();
     return (
       (measurement.location_name &&
         measurement.location_name.toLowerCase().includes(searchLower)) ||
-      (measurement.notes &&
-        measurement.notes.toLowerCase().includes(searchLower))
+      (measurement.notes && measurement.notes.toLowerCase().includes(searchLower))
     );
   });
 
@@ -157,47 +152,34 @@ export default function WaterLevelsPage() {
   const paginatedMeasurements = filteredMeasurements.slice(start, end);
 
   const calculateAverageWaterLevel = () => {
-    const validMeasurements = measurements.filter(
-      m => m.water_level_cm !== null,
-    );
-    if (validMeasurements.length === 0) return 'N/A';
+    const validMeasurements = measurements.filter((m) => m.water_level_cm !== null);
+    if (validMeasurements.length === 0) return "N/A";
 
-    const sum = validMeasurements.reduce(
-      (acc, curr) => acc + (curr.water_level_cm || 0),
-      0,
-    );
-    return (sum / validMeasurements.length).toFixed(2) + ' cm';
+    const sum = validMeasurements.reduce((acc, curr) => acc + (curr.water_level_cm || 0), 0);
+    return (sum / validMeasurements.length).toFixed(2) + " cm";
   };
 
   const getLocationCount = () => {
     const locations = new Set(
-      measurements.filter(m => m.location_name).map(m => m.location_name),
+      measurements.filter((m) => m.location_name).map((m) => m.location_name)
     );
     return locations.size;
   };
 
   return (
     <DashboardLayout>
-      <h1 className="text-2xl font-bold mb-6 text-gray-900">
-        Water Level Measurements
-      </h1>
+      <h1 className="text-2xl font-bold mb-6 text-gray-900">Water Level Measurements</h1>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <Card className="bg-white shadow-sm border border-gray-100">
           <CardBody className="text-center">
-            <div className="text-sm font-semibold text-gray-600">
-              Total Measurements
-            </div>
-            <div className="text-3xl font-bold mt-2 text-gray-900">
-              {measurements.length}
-            </div>
+            <div className="text-sm font-semibold text-gray-600">Total Measurements</div>
+            <div className="text-3xl font-bold mt-2 text-gray-900">{measurements.length}</div>
           </CardBody>
         </Card>
         <Card className="bg-white shadow-sm border border-gray-100">
           <CardBody className="text-center">
-            <div className="text-sm font-semibold text-gray-600">
-              Average Water Level
-            </div>
+            <div className="text-sm font-semibold text-gray-600">Average Water Level</div>
             <div className="text-3xl font-bold mt-2 text-gray-900">
               {calculateAverageWaterLevel()}
             </div>
@@ -205,22 +187,14 @@ export default function WaterLevelsPage() {
         </Card>
         <Card className="bg-white shadow-sm border border-gray-100">
           <CardBody className="text-center">
-            <div className="text-sm font-semibold text-gray-600">
-              Measurement Locations
-            </div>
-            <div className="text-3xl font-bold mt-2 text-gray-900">
-              {getLocationCount()}
-            </div>
+            <div className="text-sm font-semibold text-gray-600">Measurement Locations</div>
+            <div className="text-3xl font-bold mt-2 text-gray-900">{getLocationCount()}</div>
           </CardBody>
         </Card>
       </div>
 
       <div className="mb-6">
-        <LineChartComponent
-          title="Water Level Trends by Location"
-          data={chartData}
-          height={350}
-        />
+        <LineChartComponent title="Water Level Trends by Location" data={chartData} height={350} />
       </div>
 
       <div className="mb-6">
@@ -249,29 +223,21 @@ export default function WaterLevelsPage() {
               <TableColumn>TYPE</TableColumn>
             </TableHeader>
             <TableBody>
-              {paginatedMeasurements.map(measurement => (
+              {paginatedMeasurements.map((measurement) => (
                 <TableRow key={measurement.id}>
-                  <TableCell>
-                    {measurement.location_name || 'Unknown'}
-                  </TableCell>
+                  <TableCell>{measurement.location_name || "Unknown"}</TableCell>
                   <TableCell>
                     {measurement.water_level_cm !== null
                       ? `${measurement.water_level_cm} cm`
-                      : 'Not recorded'}
+                      : "Not recorded"}
                   </TableCell>
+                  <TableCell>{format(new Date(measurement.timestamp), "PPp")}</TableCell>
                   <TableCell>
-                    {format(new Date(measurement.timestamp), 'PPp')}
+                    {measurement.rssi_ble ? measurement.rssi_ble.length : 0} BLE,{" "}
+                    {measurement.rssi_wifi ? measurement.rssi_wifi.length : 0} WiFi
                   </TableCell>
-                  <TableCell>
-                    {measurement.rssi_ble ? measurement.rssi_ble.length : 0}{' '}
-                    BLE,{' '}
-                    {measurement.rssi_wifi ? measurement.rssi_wifi.length : 0}{' '}
-                    WiFi
-                  </TableCell>
-                  <TableCell>{measurement.notes || '-'}</TableCell>
-                  <TableCell>
-                    {measurement.measurement_type || 'standard'}
-                  </TableCell>
+                  <TableCell>{measurement.notes || "-"}</TableCell>
+                  <TableCell>{measurement.measurement_type || "standard"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -279,8 +245,7 @@ export default function WaterLevelsPage() {
 
           <div className="flex justify-between items-center mt-4">
             <span className="text-default-400 text-sm">
-              Showing {start + 1} to{' '}
-              {Math.min(end, filteredMeasurements.length)} of{' '}
+              Showing {start + 1} to {Math.min(end, filteredMeasurements.length)} of{" "}
               {filteredMeasurements.length} measurements
             </span>
             <Pagination total={totalPages} page={page} onChange={setPage} />
