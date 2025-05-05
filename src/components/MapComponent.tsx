@@ -137,14 +137,14 @@ export default function MapComponent({
 
     // Create heatmap data if needed
     if (showHeatmap && devices.length > 0) {
-      const heatData = devices.map((device) => {
+      const heatData: Array<[number, number, number]> = devices.map((device) => {
         // Normalize RSSI values between -100 and -30
         // Higher RSSI (closer to 0) = more intensity
         const intensity = 1 - Math.min(1, Math.max(0, (Math.abs(device.rssi) - 30) / 70));
         return [device.lat, device.lng, intensity * 0.8]; // Scale down intensity a bit
       });
 
-      // Create the heatmap layer
+      // Create the heatmap layer - using the explicit typing
       heatmapLayerRef.current = L.heatLayer(heatData, {
         radius: 25,
         blur: 15,
