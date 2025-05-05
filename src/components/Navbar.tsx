@@ -18,6 +18,7 @@ export default function AppNavbar() {
     { key: "/devices", label: "Devices", path: "/devices" },
     { key: "/maps", label: "Maps", path: "/maps" },
     { key: "/analysis", label: "Analysis", path: "/analysis" },
+    { key: "/compare", label: "Compare", path: "/compare" },
   ];
 
   const themeItems = [

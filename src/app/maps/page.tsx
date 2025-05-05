@@ -1,10 +1,47 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import dynamic from "next/dynamic";
-import { Spinner, Input, Button, Card, CardBody } from "@heroui/react";
+import {
+  Spinner,
+  Input,
+  Button,
+  Card,
+  CardBody,
+  CardHeader,
+  Divider,
+  Tooltip,
+  Select,
+  SelectItem,
+} from "@heroui/react";
+import {
+  Tabs,
+  Slider,
+  Radio,
+  Space,
+  Tag,
+  Typography,
+  Statistic,
+  Empty,
+  Badge,
+  Switch,
+  Alert,
+  Collapse,
+  List,
+  Avatar,
+} from "antd";
+import {
+  MapIcon,
+  MapPinIcon,
+  AdjustmentsHorizontalIcon,
+  SignalIcon,
+  ArrowPathIcon,
+} from "@heroicons/react/24/outline";
 import DashboardLayout from "@/components/DashboardLayout";
 import supabase, { safeSupabaseOperation } from "@/lib/supabase";
+
+const { Title, Text } = Typography;
+const { Panel } = Collapse;
 
 // Dynamically import the Map component to avoid SSR issues with leaflet
 const MapComponent = dynamic(() => import("@/components/MapComponent"), {
@@ -12,7 +49,7 @@ const MapComponent = dynamic(() => import("@/components/MapComponent"), {
   loading: () => (
     <div
       style={{
-        height: "400px",
+        height: "500px",
         background: "#f0f0f0",
         display: "flex",
         alignItems: "center",
@@ -30,6 +67,9 @@ interface Location {
   lat: number;
   lng: number;
   notes: string;
+  createdAt?: string;
+  deviceCount?: number;
+  averageRssi?: number;
 }
 
 interface Device {
@@ -40,6 +80,18 @@ interface Device {
   lng: number;
   rssi: number;
   notes: string;
+  device_id?: string;
+  scan_time?: string;
+}
+
+interface LocationAnalysis {
+  id: number;
+  name: string;
+  deviceCount: number;
+  averageRssi: number;
+  minRssi: number;
+  maxRssi: number;
+  uniqueDevices: number;
 }
 
 export default function MapsPage() {
@@ -53,39 +105,57 @@ export default function MapsPage() {
   const [selectedDevice, setSelectedDevice] = useState<number | null>(null);
   const [selectedLocationData, setSelectedLocationData] = useState<Location | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<string>("map");
+  const [showHeatmap, setShowHeatmap] = useState<boolean>(false);
+  const [rssiRange, setRssiRange] = useState<[number, number]>([-100, -30]);
+  const [dateRange, setDateRange] = useState<[string, string] | null>(null);
+  const [selectedTimeFrame, setSelectedTimeFrame] = useState<string>("all");
+  const [refreshKey, setRefreshKey] = useState<number>(0);
+
+  // Get the analysis data for locations
+  const locationAnalysis = useMemo(() => {
+    const analysisMap = new Map<number, LocationAnalysis>();
+
+    locations.forEach((location) => {
+      const locationDevices = devices.filter((d) => d.location_id === location.id);
+      const deviceRssi = locationDevices.map((d) => d.rssi);
+      const uniqueDeviceIds = new Set(locationDevices.map((d) => d.device_id || d.name));
+
+      analysisMap.set(location.id, {
+        id: location.id,
+        name: location.name,
+        deviceCount: locationDevices.length,
+        averageRssi:
+          deviceRssi.length > 0
+            ? Math.round(deviceRssi.reduce((a, b) => a + b, 0) / deviceRssi.length)
+            : 0,
+        minRssi: deviceRssi.length > 0 ? Math.min(...deviceRssi) : 0,
+        maxRssi: deviceRssi.length > 0 ? Math.max(...deviceRssi) : 0,
+        uniqueDevices: uniqueDeviceIds.size,
+      });
+    });
+
+    return Array.from(analysisMap.values());
+  }, [locations, devices]);
 
   // Fetch data from Supabase on component mount
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [refreshKey]);
 
   // Apply filters when filter conditions change
   useEffect(() => {
     applyFilters();
-  }, [selectedLocation, searchQuery, locations, devices]);
+  }, [selectedLocation, searchQuery, locations, devices, rssiRange, selectedTimeFrame]);
 
   const fetchData = async () => {
     setIsLoading(true);
     setError(null);
     try {
-      console.log("Fetching data from Supabase...");
-
-      // First let's check what tables are available
-      const { data: tablesData, error: tablesError } = await safeSupabaseOperation(() =>
-        supabase.from("_tables").select("*")
-      );
-
-      console.log("Available tables:", tablesData || "Error fetching tables");
-
       // Fetch locations
-      console.log("Fetching location data...");
       const { data: locationData, error: locationError } = await safeSupabaseOperation(() =>
         supabase.from("location_scanned").select("*").order("created_at", { ascending: false })
       );
-
-      // Log full API response
-      console.log("Raw location data response:", locationData);
-      console.log("Location error:", locationError);
 
       if (locationError) {
         console.error("Error fetching locations:", locationError);
@@ -94,13 +164,9 @@ export default function MapsPage() {
       }
 
       // Fetch devices
-      console.log("Fetching device data...");
       const { data: deviceData, error: deviceError } = await safeSupabaseOperation(() =>
         supabase.from("scanned_device").select("*").order("scan_time", { ascending: false })
       );
-
-      console.log("Raw device data response:", deviceData);
-      console.log("Device error:", deviceError);
 
       if (deviceError) {
         console.error("Error fetching devices:", deviceError);
@@ -109,14 +175,9 @@ export default function MapsPage() {
       }
 
       // Transform location data to match our interface
-      console.log("Transforming data...");
-
       let transformedLocations: Location[] = [];
 
       if (locationData && locationData.length > 0) {
-        // Check structure of first item to debug field names
-        console.log("First location data item structure:", locationData[0]);
-
         transformedLocations = locationData
           .map((loc: any) => {
             // Try to handle different potential field name formats
@@ -125,7 +186,6 @@ export default function MapsPage() {
 
             // Skip locations with invalid coordinates
             if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-              console.warn("Skipping location with invalid coordinates:", loc);
               return null;
             }
 
@@ -135,30 +195,24 @@ export default function MapsPage() {
               lat: Number(lat),
               lng: Number(lng),
               notes: loc.location_notes || loc.notes || "",
+              createdAt: loc.created_at || loc.timestamp,
             };
 
-            console.log("Transformed location:", item);
             return item;
           })
           .filter(Boolean) as Location[];
       }
-
-      console.log("Final transformed locations:", transformedLocations);
 
       // Create lookup map for location names to IDs
       const locationNameToId = new Map<string, number>();
       transformedLocations.forEach((loc) => {
         locationNameToId.set(loc.name, loc.id);
       });
-      console.log("Location name to ID map:", Object.fromEntries(locationNameToId));
 
       // Transform device data to match our interface
       let transformedDevices: Device[] = [];
 
       if (deviceData && deviceData.length > 0) {
-        // Check structure of first item to debug field names
-        console.log("First device data item structure:", deviceData[0]);
-
         transformedDevices = deviceData
           .map((dev: any) => {
             // Try to handle different potential field name formats
@@ -175,12 +229,10 @@ export default function MapsPage() {
               locationNameToId.has(dev.location_name)
             ) {
               locationId = locationNameToId.get(dev.location_name) || 0;
-              console.log(`Mapped location name "${dev.location_name}" to ID ${locationId}`);
             }
 
             // Skip devices with invalid coordinates
             if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
-              console.warn("Skipping device with invalid coordinates:", dev);
               return null;
             }
 
@@ -192,23 +244,41 @@ export default function MapsPage() {
               lng: Number(lng),
               rssi: dev.rssi || -100,
               notes: dev.location_notes || dev.notes || "",
+              device_id: dev.device_id,
+              scan_time: dev.scan_time,
             };
 
-            console.log("Transformed device:", item);
             return item;
           })
           .filter(Boolean) as Device[];
       }
 
-      console.log("Final transformed devices:", transformedDevices);
+      // Calculate device counts and average RSSI for each location
+      const locationStats = new Map<
+        number,
+        { count: number; rssiSum: number; rssiCount: number }
+      >();
 
-      // Log device-to-location mappings for debugging
-      const devicesByLocation = new Map<number, number>();
       transformedDevices.forEach((device) => {
         const locId = device.location_id;
-        devicesByLocation.set(locId, (devicesByLocation.get(locId) || 0) + 1);
+        if (!locationStats.has(locId)) {
+          locationStats.set(locId, { count: 0, rssiSum: 0, rssiCount: 0 });
+        }
+
+        const stats = locationStats.get(locId)!;
+        stats.count++;
+        stats.rssiSum += device.rssi;
+        stats.rssiCount++;
       });
-      console.log("Devices by location:", Object.fromEntries(devicesByLocation));
+
+      // Enhance locations with stats
+      transformedLocations = transformedLocations.map((loc) => ({
+        ...loc,
+        deviceCount: locationStats.get(loc.id)?.count || 0,
+        averageRssi: locationStats.get(loc.id)?.rssiCount
+          ? Math.round(locationStats.get(loc.id)!.rssiSum / locationStats.get(loc.id)!.rssiCount)
+          : undefined,
+      }));
 
       setLocations(transformedLocations);
       setDevices(transformedDevices);
@@ -226,11 +296,48 @@ export default function MapsPage() {
     let filteredLocs = [...locations];
     let filteredDevs = [...devices];
 
+    // Filter by signal strength
+    if (rssiRange && rssiRange.length === 2) {
+      filteredDevs = filteredDevs.filter(
+        (dev) => dev.rssi >= rssiRange[0] && dev.rssi <= rssiRange[1]
+      );
+    }
+
+    // Filter by time frame
+    if (selectedTimeFrame !== "all" && selectedTimeFrame !== "") {
+      const now = new Date();
+      let cutoffDate = new Date();
+
+      switch (selectedTimeFrame) {
+        case "day":
+          cutoffDate.setDate(now.getDate() - 1);
+          break;
+        case "week":
+          cutoffDate.setDate(now.getDate() - 7);
+          break;
+        case "month":
+          cutoffDate.setMonth(now.getMonth() - 1);
+          break;
+      }
+
+      filteredDevs = filteredDevs.filter((dev) => {
+        if (!dev.scan_time) return true;
+        return new Date(dev.scan_time) >= cutoffDate;
+      });
+    }
+
     // Filter locations by search query
     if (searchQuery) {
       const query = searchQuery.toLowerCase();
       filteredLocs = filteredLocs.filter(
         (loc) => loc.name.toLowerCase().includes(query) || loc.notes.toLowerCase().includes(query)
+      );
+
+      // Also filter devices by name or ID
+      filteredDevs = filteredDevs.filter(
+        (dev) =>
+          dev.name.toLowerCase().includes(query) ||
+          (dev.device_id && dev.device_id.toLowerCase().includes(query))
       );
     }
 
@@ -243,13 +350,7 @@ export default function MapsPage() {
       filteredLocs = filteredLocs.filter((loc) => loc.id === locId);
     }
 
-    // Log device counts per location for debugging
-    const counts = filteredLocs.map((loc) => {
-      const count = filteredDevs.filter((d) => d.location_id === loc.id).length;
-      return { locationId: loc.id, locationName: loc.name, deviceCount: count };
-    });
-    console.log("Device counts per location:", counts);
-
+    // Update with filtered data
     setFilteredLocations(filteredLocs);
     setFilteredDevices(filteredDevs);
   };
@@ -257,6 +358,7 @@ export default function MapsPage() {
   const handleLocationSelect = (locationId: number) => {
     const location = locations.find((loc) => loc.id === locationId) || null;
     setSelectedLocationData(location);
+    setSelectedLocation(locationId.toString());
   };
 
   const handleDeviceSelect = (deviceId: number) => {
@@ -271,153 +373,853 @@ export default function MapsPage() {
   // Add sample data for testing if no data is available
   const addSampleData = () => {
     const sampleLocations: Location[] = [
-      { id: 1, name: "San Francisco", lat: 37.7749, lng: -122.4194, notes: "Test location 1" },
-      { id: 2, name: "New York", lat: 40.7128, lng: -74.006, notes: "Test location 2" },
-    ];
-
-    const sampleDevices: Device[] = [
       {
         id: 1,
-        name: "Device 1",
-        location_id: 1,
+        name: "San Francisco",
         lat: 37.7749,
         lng: -122.4194,
-        rssi: -50,
-        notes: "Test device 1",
+        notes: "Test location 1",
+        deviceCount: 15,
+        averageRssi: -75,
       },
       {
         id: 2,
-        name: "Device 2",
-        location_id: 2,
+        name: "New York",
         lat: 40.7128,
         lng: -74.006,
-        rssi: -70,
-        notes: "Test device 2",
+        notes: "Test location 2",
+        deviceCount: 8,
+        averageRssi: -82,
+      },
+      {
+        id: 3,
+        name: "Chicago",
+        lat: 41.8781,
+        lng: -87.6298,
+        notes: "Test location 3",
+        deviceCount: 12,
+        averageRssi: -68,
       },
     ];
+
+    const sampleDevices: Device[] = [];
+
+    // Generate sample devices around each location
+    sampleLocations.forEach((location) => {
+      // Generate random devices around this location
+      const deviceCount = location.deviceCount || 10;
+      for (let i = 0; i < deviceCount; i++) {
+        // Random position around the location (within ~500m)
+        const latOffset = (Math.random() - 0.5) * 0.01;
+        const lngOffset = (Math.random() - 0.5) * 0.01;
+
+        // Random RSSI based on distance from center
+        const distance = Math.sqrt(latOffset * latOffset + lngOffset * lngOffset);
+        const rssi = Math.round(-60 - distance * 3000);
+
+        sampleDevices.push({
+          id: sampleDevices.length + 1,
+          name: `Device ${sampleDevices.length + 1}`,
+          device_id: `D${sampleDevices.length + 1}`,
+          location_id: location.id,
+          lat: location.lat + latOffset,
+          lng: location.lng + lngOffset,
+          rssi,
+          notes: `Sample device at ${location.name}`,
+        });
+      }
+    });
 
     setLocations(sampleLocations);
     setDevices(sampleDevices);
     setFilteredLocations(sampleLocations);
     setFilteredDevices(sampleDevices);
-    console.log("Added sample data for testing");
+  };
+
+  // Fix for the Select component by providing key-value format
+  const locationOptions = useMemo(() => {
+    return [
+      { key: "all", value: "all", label: "All Locations" },
+      ...locations.map((location) => ({
+        key: location.id.toString(),
+        value: location.id.toString(),
+        label: `${location.name} ${location.deviceCount ? `(${location.deviceCount})` : ""}`,
+      })),
+    ];
+  }, [locations]);
+
+  // Time frame options
+  const timeFrameOptions = [
+    { label: "All Time", value: "all" },
+    { label: "Last 24h", value: "day" },
+    { label: "Last Week", value: "week" },
+    { label: "Last Month", value: "month" },
+  ];
+
+  // Get signal strength color
+  const getRssiColor = (rssi: number) => {
+    if (rssi > -70) return "#4ade80"; // green
+    if (rssi > -85) return "#fbbf24"; // yellow
+    return "#ef4444"; // red
+  };
+
+  // Calculate average and metrics for selected devices
+  const selectedLocationMetrics = useMemo(() => {
+    if (!selectedLocationData) return null;
+
+    const locationDevices = filteredDevices.filter(
+      (d) => d.location_id === selectedLocationData.id
+    );
+    const rssiValues = locationDevices.map((d) => d.rssi);
+    const uniqueDeviceIds = new Set(locationDevices.map((d) => d.device_id || d.name));
+
+    return {
+      deviceCount: locationDevices.length,
+      averageRssi:
+        rssiValues.length > 0
+          ? Math.round(rssiValues.reduce((a, b) => a + b, 0) / rssiValues.length)
+          : null,
+      minRssi: rssiValues.length > 0 ? Math.min(...rssiValues) : null,
+      maxRssi: rssiValues.length > 0 ? Math.max(...rssiValues) : null,
+      uniqueDevices: uniqueDeviceIds.size,
+    };
+  }, [selectedLocationData, filteredDevices]);
+
+  const getTopDevices = () => {
+    // Group devices by device_id or name, taking the maximum RSSI for each
+    const deviceGroups = new Map<string, Device>();
+
+    filteredDevices.forEach((device) => {
+      const key = device.device_id || device.name;
+      if (!deviceGroups.has(key) || deviceGroups.get(key)!.rssi < device.rssi) {
+        deviceGroups.set(key, device);
+      }
+    });
+
+    // Sort devices by RSSI and return top 5
+    return Array.from(deviceGroups.values())
+      .sort((a, b) => b.rssi - a.rssi)
+      .slice(0, 5);
   };
 
   return (
     <DashboardLayout>
       <div className="p-4">
-        <h1 className="text-2xl font-bold mb-4">Device Map</h1>
-
-        <div className="mb-4 flex flex-wrap gap-4">
-          <Card className="w-full md:w-auto shadow-sm">
-            <CardBody className="flex flex-col md:flex-row gap-4">
-              <div className="w-full md:w-64">
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Filter by Location
-                </label>
-                <select
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  value={selectedLocation}
-                  onChange={(e) => setSelectedLocation(e.target.value)}
-                  disabled={isLoading}
-                >
-                  <option value="all">All Locations</option>
-                  {locations.map((location) => (
-                    <option key={location.id} value={location.id.toString()}>
-                      {location.name}
-                    </option>
-                  ))}
-                </select>
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800 flex items-center">
+              <MapIcon className="h-6 w-6 mr-2 text-primary" />
+              BLE Device Map
+            </h1>
+            <p className="text-gray-500 mt-1">
+              Visualize and analyze BLE device locations and signal strength across your environment
+            </p>
+          </div>
+          <div className="mt-3 md:mt-0 flex items-center gap-2">
+            {isLoading && (
+              <div className="flex items-center text-primary px-3 py-1 rounded-md bg-primary-50 mr-1">
+                <Spinner size="sm" color="primary" className="mr-2" />
+                <span className="text-sm">Loading data...</span>
               </div>
-
-              <Input
-                label="Search"
-                placeholder="Search by name or notes"
-                value={searchQuery}
-                onValueChange={setSearchQuery}
-                className="w-full md:w-64"
-                isDisabled={isLoading}
-              />
-
-              <Button
-                color="primary"
-                onPress={() => {
-                  setSelectedLocation("all");
-                  setSearchQuery("");
-                }}
-                className="mt-auto"
-                isDisabled={isLoading}
-              >
-                Reset Filters
-              </Button>
-            </CardBody>
-          </Card>
+            )}
+            <Button
+              color="primary"
+              onPress={() => setRefreshKey((prev) => prev + 1)}
+              startContent={<ArrowPathIcon className="h-4.5 w-4.5" />}
+              isLoading={isLoading}
+              className="min-w-[120px]"
+            >
+              {isLoading ? "Loading..." : "Refresh Data"}
+            </Button>
+          </div>
         </div>
 
+        {isLoading && (
+          <div className="w-full flex justify-center my-12">
+            <div className="flex flex-col items-center">
+              <Spinner size="lg" color="primary" className="mb-4" />
+              <p className="text-primary text-center">Loading BLE device data and locations...</p>
+            </div>
+          </div>
+        )}
+
+        {!isLoading && (
+          <Tabs
+            activeKey={activeTab}
+            onChange={setActiveTab}
+            className="mb-6"
+            items={[
+              {
+                key: "map",
+                label: (
+                  <span className="flex items-center">
+                    <MapIcon className="h-4 w-4 mr-1" /> Map View
+                  </span>
+                ),
+                children: (
+                  <>
+                    <div className="grid grid-cols-1 xl:grid-cols-4 gap-4 mb-4">
+                      <div className="xl:col-span-3">
+                        <Card className="overflow-hidden shadow-sm border-none">
+                          <CardHeader className="flex justify-between items-center bg-primary-50 py-3 px-4">
+                            <h2 className="text-lg font-semibold flex items-center">
+                              <MapPinIcon className="h-5 w-5 mr-2 text-primary" />
+                              Device Map
+                              {filteredLocations.length > 0 && (
+                                <Badge
+                                  count={filteredDevices.length}
+                                  color="#1677ff"
+                                  style={{ marginLeft: "8px" }}
+                                  overflowCount={999}
+                                />
+                              )}
+                            </h2>
+                            <div className="flex items-center gap-2">
+                              <div className="flex items-center gap-1.5 mr-1 text-sm text-gray-600">
+                                <span>Markers</span>
+                                <Switch
+                                  checked={showHeatmap}
+                                  onChange={setShowHeatmap}
+                                  size="small"
+                                />
+                                <span>Heatmap</span>
+                              </div>
+                              <Tooltip title="Toggle between marker view and heatmap visualization">
+                                <Button size="sm" isIconOnly variant="light" onPress={() => {}}>
+                                  <SignalIcon className="h-4 w-4" />
+                                </Button>
+                              </Tooltip>
+                            </div>
+                          </CardHeader>
+                          <CardBody className="p-0">
+                            <div style={{ height: "650px", width: "100%" }}>
+                              <MapComponent
+                                locations={filteredLocations}
+                                devices={filteredDevices}
+                                onLocationSelect={handleLocationSelect}
+                                onDeviceSelect={handleDeviceSelect}
+                                showHeatmap={showHeatmap}
+                              />
+                            </div>
+                          </CardBody>
+                        </Card>
+                      </div>
+
+                      <div className="xl:col-span-1">
+                        <Card className="shadow-sm border-none mb-4">
+                          <CardHeader className="py-3 px-4 bg-primary-50">
+                            <h2 className="text-lg font-semibold flex items-center">
+                              <AdjustmentsHorizontalIcon className="h-5 w-5 mr-2 text-primary" />
+                              Filters
+                            </h2>
+                          </CardHeader>
+                          <CardBody className="py-4 space-y-5">
+                            {isLoading ? (
+                              <div className="flex flex-col items-center py-8">
+                                <Spinner color="primary" size="md" className="mb-4" />
+                                <p className="text-sm text-gray-600">Loading filter options...</p>
+                              </div>
+                            ) : (
+                              <>
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Location
+                                  </label>
+                                  <Select
+                                    fullWidth
+                                    label="Filter by Location"
+                                    placeholder="Select location"
+                                    selectedKeys={[selectedLocation]}
+                                    onChange={(e) => setSelectedLocation(e.target.value)}
+                                    classNames={{
+                                      trigger: "h-10",
+                                    }}
+                                  >
+                                    {locationOptions.map((option) => (
+                                      <SelectItem key={option.key} textValue={option.label}>
+                                        {option.label}
+                                      </SelectItem>
+                                    ))}
+                                  </Select>
+                                </div>
+
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Search
+                                  </label>
+                                  <Input
+                                    placeholder="Search devices or locations"
+                                    value={searchQuery}
+                                    onValueChange={setSearchQuery}
+                                    startContent={<SearchIcon className="h-4 w-4 text-gray-500" />}
+                                    classNames={{
+                                      inputWrapper: "h-10",
+                                    }}
+                                  />
+                                </div>
+
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                    Signal Strength (RSSI)
+                                  </label>
+                                  <div className="px-1">
+                                    <Slider
+                                      range
+                                      min={-120}
+                                      max={-30}
+                                      value={rssiRange}
+                                      onChange={(value) => setRssiRange(value as [number, number])}
+                                      marks={{
+                                        "-120": { label: "-120", style: { color: "#ef4444" } },
+                                        "-90": { label: "-90", style: { color: "#fbbf24" } },
+                                        "-60": { label: "-60", style: { color: "#4ade80" } },
+                                        "-30": { label: "-30", style: { color: "#4ade80" } },
+                                      }}
+                                      tooltip={{
+                                        formatter: (value) => `${value} dBm`,
+                                        placement: "top",
+                                      }}
+                                      className="mb-6"
+                                    />
+                                  </div>
+                                  <div className="flex justify-between text-xs text-gray-500 mt-2 px-1">
+                                    <div className="flex items-center">
+                                      <div className="w-3 h-3 rounded-full bg-red-500 mr-1"></div>
+                                      <span>Weak</span>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <div className="w-3 h-3 rounded-full bg-amber-400 mr-1"></div>
+                                      <span>Medium</span>
+                                    </div>
+                                    <div className="flex items-center">
+                                      <div className="w-3 h-3 rounded-full bg-green-400 mr-1"></div>
+                                      <span>Strong</span>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    Time Frame
+                                  </label>
+                                  <Radio.Group
+                                    options={timeFrameOptions}
+                                    onChange={(e) => setSelectedTimeFrame(e.target.value)}
+                                    value={selectedTimeFrame}
+                                    optionType="button"
+                                    buttonStyle="solid"
+                                    className="w-full"
+                                    size="middle"
+                                  />
+                                </div>
+
+                                <div className="pt-2">
+                                  <Button
+                                    fullWidth
+                                    color="default"
+                                    variant="flat"
+                                    onPress={() => {
+                                      setSelectedLocation("all");
+                                      setSearchQuery("");
+                                      setRssiRange([-100, -30]);
+                                      setSelectedTimeFrame("all");
+                                    }}
+                                    startContent={<AdjustmentsHorizontalIcon className="h-4 w-4" />}
+                                  >
+                                    Reset Filters
+                                  </Button>
+                                </div>
+                              </>
+                            )}
+                          </CardBody>
+                        </Card>
+
+                        {selectedLocationData && !isLoading && (
+                          <Card className="shadow-sm border-none">
+                            <CardHeader className="flex justify-between items-center py-3 px-4 bg-primary-50">
+                              <h2 className="text-lg font-semibold">{selectedLocationData.name}</h2>
+                              <Badge
+                                count={selectedLocationMetrics?.deviceCount || 0}
+                                showZero
+                                style={{ backgroundColor: "#1677ff" }}
+                              />
+                            </CardHeader>
+                            <CardBody>
+                              {selectedLocationMetrics && (
+                                <div className="space-y-3">
+                                  <p className="text-sm text-gray-600">
+                                    {selectedLocationData.notes || "No additional notes available."}
+                                  </p>
+
+                                  <div className="grid grid-cols-2 gap-2 mt-2">
+                                    <Statistic
+                                      title={<span className="text-gray-600">Average RSSI</span>}
+                                      value={selectedLocationMetrics.averageRssi || "N/A"}
+                                      suffix="dBm"
+                                      valueStyle={{
+                                        color: selectedLocationMetrics.averageRssi
+                                          ? getRssiColor(selectedLocationMetrics.averageRssi)
+                                          : undefined,
+                                        fontSize: "1.25rem",
+                                      }}
+                                    />
+                                    <Statistic
+                                      title={<span className="text-gray-600">Unique Devices</span>}
+                                      value={selectedLocationMetrics.uniqueDevices}
+                                      valueStyle={{ fontSize: "1.25rem" }}
+                                    />
+                                  </div>
+
+                                  <div className="text-xs text-gray-500 pt-2">
+                                    {selectedLocationMetrics.minRssi !== null && (
+                                      <div className="mb-1">
+                                        <span className="font-medium">Signal range:</span>{" "}
+                                        {selectedLocationMetrics.minRssi} to{" "}
+                                        {selectedLocationMetrics.maxRssi} dBm
+                                      </div>
+                                    )}
+                                    <div>
+                                      <span className="font-medium">Coordinates:</span>{" "}
+                                      {selectedLocationData.lat.toFixed(6)},{" "}
+                                      {selectedLocationData.lng.toFixed(6)}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </CardBody>
+                          </Card>
+                        )}
+                      </div>
+                    </div>
+
+                    {!isLoading && filteredDevices.length > 0 && (
+                      <Card className="shadow-sm border-none mt-4 mb-4">
+                        <CardHeader className="bg-primary-50 py-3 px-4">
+                          <h2 className="text-lg font-semibold flex items-center">
+                            <SignalIcon className="h-5 w-5 mr-2 text-primary" />
+                            Strongest Devices
+                          </h2>
+                        </CardHeader>
+                        <CardBody>
+                          <List
+                            dataSource={getTopDevices()}
+                            renderItem={(device) => (
+                              <List.Item
+                                key={device.id}
+                                className="cursor-pointer hover:bg-gray-50 transition-colors rounded-md"
+                                onClick={() => handleDeviceSelect(device.id)}
+                              >
+                                <List.Item.Meta
+                                  avatar={
+                                    <Avatar
+                                      style={{
+                                        backgroundColor: getRssiColor(device.rssi),
+                                        display: "flex",
+                                        alignItems: "center",
+                                        justifyContent: "center",
+                                      }}
+                                    >
+                                      {device.rssi}
+                                    </Avatar>
+                                  }
+                                  title={
+                                    <div className="flex justify-between items-center">
+                                      <span>{device.name}</span>
+                                      <Tag color={getRssiColor(device.rssi)}>{device.rssi} dBm</Tag>
+                                    </div>
+                                  }
+                                  description={
+                                    <div className="text-xs">
+                                      {device.device_id && <span>ID: {device.device_id} | </span>}
+                                      {locations.find((l) => l.id === device.location_id)?.name ||
+                                        "Unknown location"}
+                                    </div>
+                                  }
+                                />
+                              </List.Item>
+                            )}
+                          />
+                        </CardBody>
+                      </Card>
+                    )}
+
+                    {!isLoading && filteredLocations.length > 0 && (
+                      <Card className="shadow-sm border-none mt-4">
+                        <CardHeader className="bg-primary-50 py-3 px-4">
+                          <h2 className="text-lg font-semibold flex items-center">
+                            <MapPinIcon className="h-5 w-5 mr-2 text-primary" />
+                            Device Distribution
+                          </h2>
+                        </CardHeader>
+                        <CardBody>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {filteredLocations.slice(0, 8).map((location) => {
+                              const locationDevices = filteredDevices.filter(
+                                (d) => d.location_id === location.id
+                              );
+                              const deviceCount = locationDevices.length;
+                              const avgRssi =
+                                deviceCount > 0
+                                  ? Math.round(
+                                      locationDevices.reduce((sum, d) => sum + d.rssi, 0) /
+                                        deviceCount
+                                    )
+                                  : 0;
+
+                              return (
+                                <Card
+                                  key={location.id}
+                                  className="shadow-sm border border-gray-100 hover:border-primary-300 transition-all cursor-pointer"
+                                  isPressable
+                                  onClick={() => handleLocationSelect(location.id)}
+                                >
+                                  <CardBody className="p-3">
+                                    <div className="flex justify-between items-start">
+                                      <div>
+                                        <h3
+                                          className="text-sm font-semibold truncate max-w-[150px]"
+                                          title={location.name}
+                                        >
+                                          {location.name}
+                                        </h3>
+                                        <p className="text-xs text-gray-500 mt-1">
+                                          {deviceCount} device{deviceCount !== 1 ? "s" : ""}
+                                        </p>
+                                      </div>
+                                      <div className="flex flex-col items-end">
+                                        <div
+                                          className="flex items-center justify-center rounded-full w-10 h-10 text-white text-sm font-medium"
+                                          style={{
+                                            backgroundColor: avgRssi
+                                              ? getRssiColor(avgRssi)
+                                              : "#9ca3af",
+                                            opacity: 0.85,
+                                          }}
+                                        >
+                                          {avgRssi ? avgRssi : "N/A"}
+                                        </div>
+                                        <span className="text-[10px] text-gray-500 mt-1">
+                                          avg dBm
+                                        </span>
+                                      </div>
+                                    </div>
+
+                                    {deviceCount > 0 && (
+                                      <div className="mt-2">
+                                        <div className="h-1.5 w-full bg-gray-100 rounded-full overflow-hidden">
+                                          <div
+                                            className="h-full rounded-full"
+                                            style={{
+                                              width: `${Math.min(
+                                                100,
+                                                (deviceCount /
+                                                  Math.max(
+                                                    ...filteredLocations.map(
+                                                      (l) =>
+                                                        filteredDevices.filter(
+                                                          (d) => d.location_id === l.id
+                                                        ).length
+                                                    ),
+                                                    1
+                                                  )) *
+                                                  100
+                                              )}%`,
+                                              backgroundColor: getRssiColor(avgRssi),
+                                              opacity: 0.8,
+                                            }}
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+                                  </CardBody>
+                                </Card>
+                              );
+                            })}
+
+                            {filteredLocations.length > 8 && (
+                              <Card className="shadow-sm border border-gray-100 flex items-center justify-center">
+                                <CardBody className="p-3 text-center">
+                                  <Button
+                                    color="primary"
+                                    variant="light"
+                                    onPress={() => setActiveTab("analysis")}
+                                    className="min-w-0"
+                                  >
+                                    +{filteredLocations.length - 8} more locations
+                                  </Button>
+                                </CardBody>
+                              </Card>
+                            )}
+                          </div>
+                        </CardBody>
+                      </Card>
+                    )}
+                  </>
+                ),
+              },
+              {
+                key: "analysis",
+                label: (
+                  <span className="flex items-center">
+                    <SignalIcon className="h-4 w-4 mr-1" /> Signal Analysis
+                  </span>
+                ),
+                children: (
+                  <>
+                    <Card className="shadow-sm border-none mb-6">
+                      <CardHeader className="bg-primary-50 py-3 px-4">
+                        <h2 className="text-lg font-semibold flex items-center">
+                          <SignalIcon className="h-5 w-5 mr-2 text-primary" />
+                          Signal Strength Distribution
+                        </h2>
+                      </CardHeader>
+                      <CardBody>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+                          <div className="col-span-1 md:col-span-2">
+                            <div className="h-[300px] flex items-end justify-between gap-1 px-6">
+                              {/* Create a simple histogram chart of RSSI values */}
+                              {(() => {
+                                // Group devices by RSSI ranges (every 5 dBm)
+                                const rssiRanges: Record<string, number> = {};
+                                const step = 5;
+
+                                // Initialize ranges from -100 to -35
+                                for (let i = -100; i <= -35; i += step) {
+                                  rssiRanges[i] = 0;
+                                }
+
+                                // Count devices in each range
+                                devices.forEach((device) => {
+                                  // Round RSSI to nearest range
+                                  const range = Math.floor(device.rssi / step) * step;
+                                  const key = Math.max(-100, Math.min(-35, range));
+                                  rssiRanges[key] = (rssiRanges[key] || 0) + 1;
+                                });
+
+                                // Find max count for scaling
+                                const maxCount = Math.max(...Object.values(rssiRanges), 1);
+
+                                // Render bars
+                                return Object.entries(rssiRanges).map(([range, count]) => {
+                                  const numRange = parseInt(range);
+
+                                  // Get color based on RSSI
+                                  let color = "#ef4444"; // Red
+                                  if (numRange > -70) color = "#4ade80"; // Green
+                                  else if (numRange > -85) color = "#fbbf24"; // Yellow
+
+                                  // Calculate height percentage
+                                  const heightPercent = (count / maxCount) * 100;
+
+                                  return (
+                                    <div key={range} className="flex flex-col items-center">
+                                      <div
+                                        className="w-6 rounded-t transition-all duration-500 ease-in-out"
+                                        style={{
+                                          height: `${Math.max(5, heightPercent)}%`,
+                                          backgroundColor: color,
+                                          opacity: count > 0 ? 0.8 : 0.2,
+                                        }}
+                                      ></div>
+                                      <div className="text-xs text-gray-500 mt-1 rotate-45 origin-left">
+                                        {range} dBm
+                                      </div>
+                                    </div>
+                                  );
+                                });
+                              })()}
+                            </div>
+                            <div className="text-center mt-6">
+                              <p className="text-sm text-gray-600">
+                                Signal strength distribution across all devices
+                              </p>
+                            </div>
+                          </div>
+                          <div className="col-span-1 flex flex-col justify-center space-y-2">
+                            <Card className="shadow-sm bg-gray-50">
+                              <CardBody className="p-4">
+                                <Statistic
+                                  title={<span className="text-gray-600">Total Devices</span>}
+                                  value={devices.length}
+                                  valueStyle={{ fontSize: "1.5rem" }}
+                                />
+                              </CardBody>
+                            </Card>
+
+                            <Card className="shadow-sm bg-gray-50">
+                              <CardBody className="p-4">
+                                <Statistic
+                                  title={<span className="text-gray-600">Average Signal</span>}
+                                  value={
+                                    devices.length > 0
+                                      ? Math.round(
+                                          devices.reduce((sum, device) => sum + device.rssi, 0) /
+                                            devices.length
+                                        )
+                                      : "N/A"
+                                  }
+                                  suffix="dBm"
+                                  valueStyle={{
+                                    fontSize: "1.5rem",
+                                    color:
+                                      devices.length > 0
+                                        ? getRssiColor(
+                                            Math.round(
+                                              devices.reduce(
+                                                (sum, device) => sum + device.rssi,
+                                                0
+                                              ) / devices.length
+                                            )
+                                          )
+                                        : undefined,
+                                  }}
+                                />
+                              </CardBody>
+                            </Card>
+
+                            <Card className="shadow-sm bg-gray-50">
+                              <CardBody className="p-4">
+                                <Statistic
+                                  title={<span className="text-gray-600">Range</span>}
+                                  value={
+                                    devices.length > 0
+                                      ? `${Math.min(...devices.map((d) => d.rssi))} to ${Math.max(
+                                          ...devices.map((d) => d.rssi)
+                                        )}`
+                                      : "N/A"
+                                  }
+                                  suffix="dBm"
+                                  valueStyle={{ fontSize: "1.5rem" }}
+                                />
+                              </CardBody>
+                            </Card>
+                          </div>
+                        </div>
+                      </CardBody>
+                    </Card>
+
+                    <Card className="shadow-sm border-none">
+                      <CardHeader className="bg-primary-50 py-3 px-4">
+                        <h2 className="text-lg font-semibold flex items-center">
+                          <MapPinIcon className="h-5 w-5 mr-2 text-primary" />
+                          Location Signal Strength Analysis
+                        </h2>
+                      </CardHeader>
+                      <CardBody>
+                        {locationAnalysis.length > 0 ? (
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {locationAnalysis.map((location) => (
+                              <Card
+                                key={location.id}
+                                className="shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-100"
+                                onClick={() => handleLocationSelect(location.id)}
+                              >
+                                <CardBody>
+                                  <div className="flex justify-between items-start mb-2">
+                                    <Title level={5} className="m-0">
+                                      {location.name}
+                                    </Title>
+                                    <Tag color={getRssiColor(location.averageRssi)}>
+                                      {location.averageRssi} dBm
+                                    </Tag>
+                                  </div>
+
+                                  <div className="flex justify-between text-gray-500 text-sm mb-3">
+                                    <span>{location.deviceCount} device entries</span>
+                                    <span>{location.uniqueDevices} unique</span>
+                                  </div>
+
+                                  <div>
+                                    <Text type="secondary" className="text-xs">
+                                      Signal Strength Range
+                                    </Text>
+                                    <div className="h-2 w-full bg-gray-100 rounded-full mt-1 mb-1 relative">
+                                      <div
+                                        className="absolute inset-y-0 rounded-full"
+                                        style={{
+                                          left: `${
+                                            Math.abs((location.minRssi + 30) / (-120 + 30)) * 100
+                                          }%`,
+                                          right: `${
+                                            100 -
+                                            Math.abs((location.maxRssi + 30) / (-120 + 30)) * 100
+                                          }%`,
+                                          background:
+                                            "linear-gradient(to right, #ef4444, #fbbf24, #4ade80)",
+                                        }}
+                                      ></div>
+                                    </div>
+                                    <div className="flex justify-between text-xs text-gray-400">
+                                      <span>{location.minRssi} dBm</span>
+                                      <span>{location.maxRssi} dBm</span>
+                                    </div>
+                                  </div>
+                                </CardBody>
+                              </Card>
+                            ))}
+                          </div>
+                        ) : (
+                          <Empty description="No location data available for analysis" />
+                        )}
+                      </CardBody>
+                    </Card>
+                  </>
+                ),
+              },
+            ]}
+          />
+        )}
+
         {error && (
-          <Card className="mb-4 shadow-sm bg-red-50">
-            <CardBody>
-              <h2 className="text-lg font-semibold text-red-600">Error</h2>
-              <p className="text-sm text-red-500">{error}</p>
-              <Button color="primary" onPress={addSampleData} className="mt-2">
-                Use Sample Data Instead
+          <Alert
+            type="error"
+            message="Error Loading Data"
+            description={error}
+            action={
+              <Button color="primary" onPress={addSampleData}>
+                Use Sample Data
               </Button>
-            </CardBody>
-          </Card>
+            }
+            className="mb-4"
+          />
         )}
 
         {locations.length === 0 && !isLoading && !error && (
-          <Card className="mb-4 shadow-sm bg-yellow-50">
-            <CardBody>
-              <h2 className="text-lg font-semibold text-yellow-600">No Data Available</h2>
-              <p className="text-sm text-yellow-500">
-                No location data was found in the database. Use sample data for testing.
-              </p>
-              <Button color="primary" onPress={addSampleData} className="mt-2">
-                Use Sample Data
-              </Button>
-            </CardBody>
-          </Card>
-        )}
-
-        {selectedLocationData && (
-          <Card className="mb-4 shadow-sm">
-            <CardBody>
-              <h2 className="text-lg font-semibold">{selectedLocationData.name}</h2>
-              <p className="text-sm text-gray-600">{selectedLocationData.notes}</p>
-              <p className="text-sm text-gray-500">
-                {filteredDevices.filter((d) => d.location_id === selectedLocationData.id).length}{" "}
-                devices at this location
-              </p>
-              <p className="text-sm text-gray-500">
-                Coordinates: {selectedLocationData.lat}, {selectedLocationData.lng}
-              </p>
-            </CardBody>
-          </Card>
-        )}
-
-        <div className="bg-white p-4 rounded-lg shadow-sm">
-          <div style={{ height: "500px", width: "100%" }}>
-            {isLoading ? (
-              <div className="h-full w-full flex items-center justify-center">
-                <Spinner size="lg" />
-              </div>
-            ) : (
-              <MapComponent
-                locations={filteredLocations}
-                devices={filteredDevices}
-                onLocationSelect={handleLocationSelect}
-                onDeviceSelect={handleDeviceSelect}
-              />
-            )}
+          <div className="text-center py-12">
+            <Empty
+              description={
+                <div>
+                  <p className="text-lg mb-2">No Location Data Available</p>
+                  <p className="text-gray-500 mb-4">No location data was found in the database.</p>
+                  <Button color="primary" onPress={addSampleData}>
+                    Use Sample Data
+                  </Button>
+                </div>
+              }
+              image={Empty.PRESENTED_IMAGE_SIMPLE}
+            />
           </div>
-          <p className="mt-4 text-sm text-gray-500">
-            This map shows the locations of all registered devices. Click on a marker to see more
-            details. {filteredLocations.length} locations and {filteredDevices.length} devices
-            displayed.
-          </p>
-        </div>
+        )}
       </div>
     </DashboardLayout>
+  );
+}
+
+// Just a simple search icon component
+function SearchIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <circle cx="11" cy="11" r="8"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
   );
 }
