@@ -15,12 +15,15 @@ import {
   Form,
   Modal,
   Spin,
+  Tabs,
 } from "antd";
 import { SearchOutlined, ReloadOutlined, BarChartOutlined } from "@ant-design/icons";
 import supabase, { safeSupabaseOperation } from "@/lib/supabase";
 import DashboardLayout from "@/components/DashboardLayout";
-import LineChartComponent from "@/components/LineChart";
+import RssiTimeseriesChart from "@/components/RssiTimeseriesChart";
+import InlineRssiChart from "@/components/InlineRssiChart";
 import { format } from "date-fns";
+import { startRssiCollection, stopRssiCollection } from "@/lib/rssiCollector";
 
 interface ScannedDevice {
   id: number;
@@ -92,6 +95,11 @@ export default function DevicesPage() {
 
   useEffect(() => {
     fetchDeviceData();
+
+    // Cleanup function
+    return () => {
+      stopRssiCollection();
+    };
   }, []);
 
   useEffect(() => {
@@ -112,17 +120,63 @@ export default function DevicesPage() {
   const fetchDeviceData = async () => {
     setIsLoading(true);
     try {
-      // Fetch all scanned devices
+      console.log("Fetching device data...");
+
+      // First get unique sessions
+      const { data: sessionData, error: sessionError } = await safeSupabaseOperation(() =>
+        supabase
+          .from("scanned_device")
+          .select("session_id")
+          .order("scan_time", { ascending: false })
+          .limit(1)
+      );
+
+      if (sessionError) {
+        console.error("Error fetching latest session:", sessionError);
+        return;
+      }
+
+      const latestSessionId = sessionData?.[0]?.session_id;
+      console.log("Latest session ID:", latestSessionId);
+
+      if (latestSessionId) {
+        // Start RSSI collection for the latest session
+        await startRssiCollection(latestSessionId);
+      }
+
+      // Fetch all scanned devices for the latest session
       const { data: deviceData, error: deviceError } = await safeSupabaseOperation(() =>
         supabase
           .from("scanned_device")
           .select("*")
+          .eq("session_id", latestSessionId)
           .order("scan_time", { ascending: false })
           .limit(1000)
       );
 
       if (deviceError) {
         console.error("Error fetching devices:", deviceError);
+        return;
+      }
+
+      console.log("Fetched device data:", {
+        sessionId: latestSessionId,
+        deviceCount: deviceData?.length || 0,
+        firstDevice: deviceData?.[0]
+          ? {
+              id: deviceData[0].id,
+              deviceId: deviceData[0].device_id,
+              sessionId: deviceData[0].session_id,
+              location: deviceData[0].location_name,
+              scanTime: deviceData[0].scan_time,
+            }
+          : null,
+      });
+
+      if (!deviceData || deviceData.length === 0) {
+        console.log("No devices found in the latest session");
+        setAllDevices([]);
+        setFilteredDevices([]);
         return;
       }
 
@@ -147,6 +201,12 @@ export default function DevicesPage() {
         ...new Set(deviceData.map((device: ScannedDevice) => device.device_id).filter(Boolean)),
       ] as string[];
       setDevices(uniqueDeviceIds);
+
+      console.log("Processed device data:", {
+        uniqueLocations,
+        uniqueDeviceIds,
+        totalDevices: deviceData.length,
+      });
 
       // Set defaults if available
       if (uniqueLocations.length > 0) {
@@ -319,13 +379,17 @@ export default function DevicesPage() {
       title: "Device ID",
       dataIndex: "device_id",
       key: "device_id",
-      render: (text: string) => <span className="font-mono text-xs">{text}</span>,
+      render: (text: string) => (
+        <Typography.Text copyable style={{ fontSize: "14px" }}>
+          {text}
+        </Typography.Text>
+      ),
     },
     {
       title: "Device Name",
       dataIndex: "device_name",
       key: "device_name",
-      render: (text: string | null) => text || <span className="text-gray-400">Unnamed</span>,
+      render: (text: string | null) => text || "Unknown",
     },
     {
       title: "Location",
@@ -337,23 +401,46 @@ export default function DevicesPage() {
       title: "RSSI",
       dataIndex: "rssi",
       key: "rssi",
-      render: (rssi: number) => {
-        // Define color based on signal strength
-        let color = "red";
-        if (rssi > -70) color = "green";
-        else if (rssi > -90) color = "orange";
-
-        return <Tag color={color}>{rssi} dBm</Tag>;
+      render: (value: number) => {
+        const color = value > -70 ? "green" : value > -90 ? "orange" : "red";
+        return <Tag color={color}>{value} dBm</Tag>;
       },
-      sorter: (a: ScannedDevice, b: ScannedDevice) => a.rssi - b.rssi,
+    },
+    {
+      title: "RSSI Over Time",
+      key: "rssi_chart",
+      width: 200,
+      render: (_: any, record: ScannedDevice) => {
+        console.log("Rendering RSSI chart for device:", {
+          deviceId: record.device_id,
+          sessionId: record.session_id,
+          location: record.location_name,
+          scanTime: record.scan_time,
+        });
+
+        return <InlineRssiChart deviceId={record.device_id} sessionId={record.session_id} />;
+      },
     },
     {
       title: "Scan Time",
       dataIndex: "scan_time",
       key: "scan_time",
-      render: (text: string) => formatTimestamp(text),
-      sorter: (a: ScannedDevice, b: ScannedDevice) =>
-        new Date(a.scan_time).getTime() - new Date(b.scan_time).getTime(),
+      render: (text: string) => format(new Date(text), "MMM d, yyyy HH:mm:ss"),
+    },
+    {
+      title: "Actions",
+      key: "actions",
+      render: (_: any, record: ScannedDevice) => (
+        <Space>
+          <AntButton
+            type="primary"
+            icon={<BarChartOutlined />}
+            onClick={() => handleDeviceRowClick(record)}
+          >
+            Analyze
+          </AntButton>
+        </Space>
+      ),
     },
   ];
 
@@ -365,335 +452,145 @@ export default function DevicesPage() {
 
   return (
     <DashboardLayout>
-      <h1 className="text-2xl font-bold mb-6 text-gray-900">BLE Devices Analysis</h1>
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold mb-2">BLE Devices Analysis</h1>
+          <div className="text-gray-600">
+            Analyze BLE device signal patterns and characteristics
+          </div>
+        </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-        <Card className="bg-white shadow-sm border border-gray-100">
-          <CardHeader className="pb-2">
-            <h3 className="text-lg font-semibold text-gray-900">Device Signal Analysis</h3>
-          </CardHeader>
-          <Divider className="opacity-50" />
-          <CardBody>
-            <Form layout="vertical" className="space-y-4">
-              <Form.Item label="Location" className="mb-0">
+        <Card title="Device Signal Analysis" className="mb-6">
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-4">
+              <div className="flex-1 min-w-[200px]">
+                <div className="mb-2">Location</div>
                 <AntSelect
-                  placeholder="Select a location (Optional)"
-                  value={selectedLocation || undefined}
+                  style={{ width: "100%" }}
+                  value={selectedLocation}
                   onChange={handleLocationChange}
-                  disabled={isLoading}
                   allowClear
-                  showSearch
-                  style={{ width: "100%" }}
-                  optionFilterProp="children"
-                  className="rounded-md"
+                  placeholder="Select location"
                 >
-                  {locations.map((location) => (
-                    <AntSelect.Option key={location} value={location}>
-                      {location}
+                  {locations.map((loc) => (
+                    <AntSelect.Option key={loc} value={loc}>
+                      {loc}
                     </AntSelect.Option>
                   ))}
                 </AntSelect>
-              </Form.Item>
-
-              <Form.Item
-                label="BLE Device"
-                className="mb-2"
-                tooltip="Select a Bluetooth Low Energy device to analyze"
-              >
+              </div>
+              <div className="flex-1 min-w-[200px]">
+                <div className="mb-2">BLE Device</div>
                 <AntSelect
-                  placeholder="Select a device"
-                  value={selectedDevice || undefined}
-                  onChange={handleDeviceChange}
-                  disabled={isLoading || devices.length === 0}
-                  showSearch
                   style={{ width: "100%" }}
+                  value={selectedDevice}
+                  onChange={handleDeviceChange}
+                  allowClear
+                  placeholder="Select device"
+                  showSearch
                   optionFilterProp="children"
-                  className="rounded-md"
-                  notFoundContent={isLoading ? "Loading..." : "No devices found"}
-                  dropdownRender={(menu) => (
-                    <>
-                      {menu}
-                      <Divider className="my-2" />
-                      <Typography.Text className="px-3 py-2 text-xs text-gray-500 block">
-                        {devices.length} devices available
-                      </Typography.Text>
-                    </>
-                  )}
                 >
-                  {devices.map((device) => (
-                    <AntSelect.Option key={device} value={device}>
-                      <Tooltip title={device} placement="left">
-                        <span className="block truncate">{device}</span>
-                      </Tooltip>
+                  {devices.map((dev) => (
+                    <AntSelect.Option key={dev} value={dev}>
+                      {dev}
                     </AntSelect.Option>
                   ))}
                 </AntSelect>
-              </Form.Item>
-
-              <Space>
-                <AntButton
-                  type="primary"
-                  onClick={analyzeDeviceSignal}
-                  disabled={isLoading || !selectedDevice}
-                  loading={isLoading}
-                  icon={<BarChartOutlined />}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  Analyze Signal Strength
-                </AntButton>
-
-                <Tooltip title="Refresh device data">
-                  <AntButton
-                    icon={<ReloadOutlined />}
-                    onClick={fetchDeviceData}
-                    disabled={isLoading}
-                  />
-                </Tooltip>
-              </Space>
-            </Form>
-          </CardBody>
-        </Card>
-
-        <Card className="bg-white shadow-sm border border-gray-100">
-          <CardHeader className="pb-2">
-            <h3 className="text-lg font-semibold text-gray-900">Device Statistics</h3>
-          </CardHeader>
-          <Divider className="opacity-50" />
-          <CardBody>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-gray-50 p-4 rounded-md">
-                <div className="text-sm font-semibold text-gray-600">Total Devices</div>
-                <div className="text-2xl font-bold mt-1 text-gray-900">{devices.length}</div>
               </div>
-              <div className="bg-gray-50 p-4 rounded-md">
-                <div className="text-sm font-semibold text-gray-600">Total Scans</div>
-                <div className="text-2xl font-bold mt-1 text-gray-900">{allDevices.length}</div>
-              </div>
-              <div className="bg-gray-50 p-4 rounded-md">
-                <div className="text-sm font-semibold text-gray-600">Locations</div>
-                <div className="text-2xl font-bold mt-1 text-gray-900">{locations.length}</div>
-              </div>
-              <div className="bg-gray-50 p-4 rounded-md">
-                <div className="text-sm font-semibold text-gray-600">Last Scan</div>
-                <div className="text-lg font-bold mt-1 text-gray-900">
-                  {allDevices.length > 0
-                    ? formatTimestamp(allDevices[0].scan_time).split(",")[0]
-                    : "N/A"}
-                </div>
+              <div className="flex-1 min-w-[200px]">
+                <div className="mb-2">Find Devices</div>
+                <AntInput
+                  placeholder="Search device ID or name..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  suffix={<SearchOutlined style={{ color: "#999" }} />}
+                />
               </div>
             </div>
-          </CardBody>
+          </div>
         </Card>
-      </div>
 
-      {signalChartData.labels.length > 0 && (
-        <div className="mb-6">
-          <LineChartComponent
-            title={`Signal Strength Over Time - ${selectedDevice}${
-              selectedLocation ? ` at ${selectedLocation}` : ""
-            }`}
-            data={signalChartData}
-            height={400}
+        <div className="bg-white rounded-lg shadow">
+          <Table
+            columns={columns}
+            dataSource={filteredDevices}
+            rowKey="id"
+            pagination={tableParams.pagination}
+            onChange={handleTableChange}
+            loading={isLoading}
+            scroll={{ x: true }}
           />
         </div>
-      )}
 
-      <div className="mb-4 flex items-center justify-between">
-        <Space direction="vertical" style={{ width: "100%", maxWidth: "400px" }}>
-          <Typography.Text strong>Find Devices</Typography.Text>
-          <Space.Compact style={{ width: "100%" }}>
-            <AntInput
-              placeholder="Search device ID or name..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              allowClear
-              prefix={<SearchOutlined className="text-gray-400" />}
-            />
-            <AntButton type="primary" onClick={filterDevices}>
-              Search
-            </AntButton>
-          </Space.Compact>
-        </Space>
-
-        <Radio.Group
-          value={tableParams.pagination.pageSize}
-          onChange={(e) =>
-            setTableParams({
-              ...tableParams,
-              pagination: {
-                ...tableParams.pagination,
-                pageSize: e.target.value,
-              },
-            })
-          }
+        <Modal
+          title={`Device Analysis: ${selectedDeviceDetails?.device_id || ""}`}
+          open={isDeviceModalVisible}
+          onCancel={() => setIsDeviceModalVisible(false)}
+          width={800}
+          footer={null}
         >
-          <Radio.Button value={10}>10</Radio.Button>
-          <Radio.Button value={20}>20</Radio.Button>
-          <Radio.Button value={50}>50</Radio.Button>
-        </Radio.Group>
-      </div>
-
-      <div className="bg-white rounded-lg shadow-sm border border-gray-100 mb-6">
-        <Table
-          columns={columns}
-          dataSource={filteredDevices.map((device) => ({ ...device, key: device.id }))}
-          loading={isLoading}
-          pagination={{
-            ...tableParams.pagination,
-            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} devices`,
-            showSizeChanger: true,
-            pageSizeOptions: ["10", "20", "50", "100"],
-          }}
-          onChange={handleTableChange}
-          scroll={{ x: 800 }}
-          size="middle"
-          onRow={(record) => ({
-            onClick: () => handleDeviceRowClick(record),
-            style: { cursor: "pointer" },
-          })}
-        />
-        <div className="p-3 text-sm text-gray-500 border-t">
-          <Tooltip title="Click on any device row to view detailed RSSI time series data">
-            <span>Click on any device to view detailed signal data over time</span>
-          </Tooltip>
-        </div>
-      </div>
-
-      <Card className="bg-white shadow-sm border border-gray-100">
-        <CardBody>
-          <h3 className="text-lg font-semibold mb-2 text-gray-900">About BLE Signal Strength</h3>
-          <p className="text-gray-600">
-            Bluetooth Low Energy (BLE) signal strength is measured in dBm (decibels relative to a
-            milliwatt). The values are typically negative, with closer to zero meaning stronger
-            signal strength. For example, -50 dBm is stronger than -80 dBm.
-          </p>
-          <p className="text-gray-600 mt-2">
-            Factors affecting signal strength include distance between devices, physical obstacles,
-            device orientation, and environmental interference. The relationship between distance
-            and signal strength typically follows an inverse square law but can be unpredictable in
-            real-world environments.
-          </p>
-        </CardBody>
-      </Card>
-
-      {/* Device Details Modal */}
-      <Modal
-        title={
-          <div>
-            <h3 className="text-lg font-semibold">
-              Device Details
-              {selectedDeviceDetails?.device_name && (
-                <span className="ml-2 text-gray-500">({selectedDeviceDetails.device_name})</span>
-              )}
-            </h3>
-            <p className="text-xs font-mono mt-1">{selectedDeviceDetails?.device_id}</p>
-          </div>
-        }
-        open={isDeviceModalVisible}
-        onCancel={() => setIsDeviceModalVisible(false)}
-        width={800}
-        footer={[
-          <AntButton key="close" onClick={() => setIsDeviceModalVisible(false)}>
-            Close
-          </AntButton>,
-        ]}
-      >
-        {selectedDeviceDetails && (
-          <div>
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <Typography.Text strong>Location</Typography.Text>
-                <div>
-                  <Tag color="blue">{selectedDeviceDetails.location_name}</Tag>
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>Session ID</Typography.Text>
-                <div>
-                  <Tag color="purple">{selectedDeviceDetails.session_id}</Tag>
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>RSSI</Typography.Text>
-                <div>
-                  <Tag
-                    color={
-                      selectedDeviceDetails.rssi > -70
-                        ? "green"
-                        : selectedDeviceDetails.rssi > -90
-                        ? "orange"
-                        : "red"
-                    }
-                  >
-                    {selectedDeviceDetails.rssi} dBm
-                  </Tag>
-                </div>
-              </div>
-              <div>
-                <Typography.Text strong>Scan Time</Typography.Text>
-                <div>{formatTimestamp(selectedDeviceDetails.scan_time)}</div>
-              </div>
-              {selectedDeviceDetails.manufacturer_data && (
-                <div className="col-span-2">
-                  <Typography.Text strong>Manufacturer Data</Typography.Text>
-                  <div className="font-mono text-xs overflow-auto max-h-20 p-2 bg-gray-50 rounded">
-                    {selectedDeviceDetails.manufacturer_data}
+          {selectedDeviceDetails && (
+            <div className="space-y-6">
+              <Tabs>
+                <Tabs.TabPane tab="Signal Strength Analysis" key="1">
+                  <div className="h-[400px]">
+                    <RssiTimeseriesChart
+                      deviceId={selectedDeviceDetails.device_id}
+                      sessionId={selectedDeviceDetails.session_id}
+                      timeRange={30}
+                    />
                   </div>
-                </div>
-              )}
-              {selectedDeviceDetails.service_uuids && (
-                <div className="col-span-2">
-                  <Typography.Text strong>Service UUIDs</Typography.Text>
-                  <div className="font-mono text-xs overflow-auto max-h-20 p-2 bg-gray-50 rounded">
-                    {selectedDeviceDetails.service_uuids}
+                </Tabs.TabPane>
+                <Tabs.TabPane tab="Device Details" key="2">
+                  <div className="space-y-4">
+                    <div>
+                      <div className="font-semibold">Device Information</div>
+                      <div className="grid grid-cols-2 gap-4 mt-2">
+                        <div>
+                          <div className="text-gray-500">Device ID</div>
+                          <div>{selectedDeviceDetails.device_id}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Device Name</div>
+                          <div>{selectedDeviceDetails.device_name || "Unknown"}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Location</div>
+                          <div>{selectedDeviceDetails.location_name}</div>
+                        </div>
+                        <div>
+                          <div className="text-gray-500">Latest RSSI</div>
+                          <div>{selectedDeviceDetails.rssi} dBm</div>
+                        </div>
+                      </div>
+                    </div>
+                    {selectedDeviceDetails.manufacturer_data && (
+                      <div>
+                        <div className="font-semibold">Manufacturer Data</div>
+                        <div className="mt-2 font-mono text-sm bg-gray-50 p-2 rounded">
+                          {selectedDeviceDetails.manufacturer_data}
+                        </div>
+                      </div>
+                    )}
+                    {selectedDeviceDetails.service_uuids && (
+                      <div>
+                        <div className="font-semibold">Service UUIDs</div>
+                        <div className="mt-2">
+                          {JSON.parse(selectedDeviceDetails.service_uuids).map(
+                            (uuid: string, index: number) => (
+                              <Tag key={index}>{uuid}</Tag>
+                            )
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                </Tabs.TabPane>
+              </Tabs>
             </div>
-
-            <div className="mb-4 text-center">
-              <h4 className="text-base font-medium text-gray-700 my-3">Time Series Data</h4>
-              <hr className="border-t border-gray-200" />
-            </div>
-
-            {loadingTimeseries ? (
-              <div className="flex items-center justify-center h-[300px]">
-                <Spin size="large" tip="Loading RSSI time series data..." />
-              </div>
-            ) : timeseriesError ? (
-              <div className="flex flex-col items-center justify-center h-[300px]">
-                <Typography.Text type="danger">{timeseriesError}</Typography.Text>
-              </div>
-            ) : timeseriesData.length === 0 ? (
-              <div className="flex items-center justify-center h-[300px]">
-                <div className="text-center">
-                  <Typography.Text type="secondary">
-                    No time series data available for this device in this session.
-                  </Typography.Text>
-                  <div className="mt-2">
-                    <Typography.Text type="secondary" className="text-xs">
-                      Time series data is only available for recent scans that were configured to
-                      collect detailed RSSI measurements.
-                    </Typography.Text>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div>
-                <LineChartComponent
-                  title={`RSSI Time Series for ${selectedDeviceDetails.device_id}`}
-                  data={signalChartData}
-                  height={300}
-                />
-                <div className="text-xs text-gray-500 mt-2 text-center">
-                  {timeseriesData.length} data points from session{" "}
-                  {selectedDeviceDetails.session_id}
-                </div>
-              </div>
-            )}
-          </div>
-        )}
-      </Modal>
+          )}
+        </Modal>
+      </div>
     </DashboardLayout>
   );
 }
