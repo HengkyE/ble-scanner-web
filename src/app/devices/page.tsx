@@ -13,6 +13,8 @@ import {
   Tooltip,
   Typography,
   Form,
+  Modal,
+  Spin,
 } from "antd";
 import { SearchOutlined, ReloadOutlined, BarChartOutlined } from "@ant-design/icons";
 import supabase, { safeSupabaseOperation } from "@/lib/supabase";
@@ -43,6 +45,15 @@ interface ScannedDevice {
   created_at: string;
 }
 
+interface RssiTimeseriesData {
+  id: number;
+  device_id: string;
+  rssi: number;
+  timestamp: string;
+  session_id: string;
+  sequence_number: number;
+}
+
 export default function DevicesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [allDevices, setAllDevices] = useState<ScannedDevice[]>([]);
@@ -71,6 +82,13 @@ export default function DevicesPage() {
       },
     ],
   });
+
+  // New state for device modal and time series data
+  const [isDeviceModalVisible, setIsDeviceModalVisible] = useState(false);
+  const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<ScannedDevice | null>(null);
+  const [timeseriesData, setTimeseriesData] = useState<RssiTimeseriesData[]>([]);
+  const [loadingTimeseries, setLoadingTimeseries] = useState(false);
+  const [timeseriesError, setTimeseriesError] = useState<string | null>(null);
 
   useEffect(() => {
     fetchDeviceData();
@@ -221,6 +239,68 @@ export default function DevicesPage() {
       console.error("Error in analyzeDeviceSignal:", error);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  // New function to handle device row click
+  const handleDeviceRowClick = async (device: ScannedDevice) => {
+    setSelectedDeviceDetails(device);
+    setIsDeviceModalVisible(true);
+    await fetchTimeseriesData(device.device_id, device.session_id);
+  };
+
+  // Fetch time series data for a specific device and session
+  const fetchTimeseriesData = async (deviceId: string, sessionId: string) => {
+    setLoadingTimeseries(true);
+    setTimeseriesError(null);
+
+    try {
+      const { data, error } = await safeSupabaseOperation(() =>
+        supabase
+          .from("rssi_timeseries")
+          .select("*")
+          .eq("device_id", deviceId)
+          .eq("session_id", sessionId)
+          .order("timestamp", { ascending: true })
+      );
+
+      if (error) {
+        console.error("Error fetching RSSI timeseries data:", error);
+        setTimeseriesError(`Error fetching data: ${error.message}`);
+        return;
+      }
+
+      setTimeseriesData(data as RssiTimeseriesData[]);
+
+      // Create chart data from time series
+      if (data && data.length > 0) {
+        const timestamps = data.map((item: RssiTimeseriesData) => {
+          const date = new Date(item.timestamp);
+          return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(
+            2,
+            "0"
+          )}:${String(date.getSeconds()).padStart(2, "0")}`;
+        });
+
+        const rssiValues = data.map((item: RssiTimeseriesData) => item.rssi);
+
+        setSignalChartData({
+          labels: timestamps,
+          datasets: [
+            {
+              label: "Signal Strength (dBm)",
+              data: rssiValues,
+              borderColor: "rgb(75, 192, 192)",
+              backgroundColor: "rgba(75, 192, 192, 0.5)",
+            },
+          ],
+        });
+      }
+    } catch (err) {
+      console.error("Error in fetchTimeseriesData:", err);
+      setTimeseriesError(`An unexpected error occurred: ${(err as Error).message}`);
+    } finally {
+      setLoadingTimeseries(false);
     }
   };
 
@@ -467,7 +547,16 @@ export default function DevicesPage() {
           onChange={handleTableChange}
           scroll={{ x: 800 }}
           size="middle"
+          onRow={(record) => ({
+            onClick: () => handleDeviceRowClick(record),
+            style: { cursor: "pointer" },
+          })}
         />
+        <div className="p-3 text-sm text-gray-500 border-t">
+          <Tooltip title="Click on any device row to view detailed RSSI time series data">
+            <span>Click on any device to view detailed signal data over time</span>
+          </Tooltip>
+        </div>
       </div>
 
       <Card className="bg-white shadow-sm border border-gray-100">
@@ -486,6 +575,125 @@ export default function DevicesPage() {
           </p>
         </CardBody>
       </Card>
+
+      {/* Device Details Modal */}
+      <Modal
+        title={
+          <div>
+            <h3 className="text-lg font-semibold">
+              Device Details
+              {selectedDeviceDetails?.device_name && (
+                <span className="ml-2 text-gray-500">({selectedDeviceDetails.device_name})</span>
+              )}
+            </h3>
+            <p className="text-xs font-mono mt-1">{selectedDeviceDetails?.device_id}</p>
+          </div>
+        }
+        open={isDeviceModalVisible}
+        onCancel={() => setIsDeviceModalVisible(false)}
+        width={800}
+        footer={[
+          <AntButton key="close" onClick={() => setIsDeviceModalVisible(false)}>
+            Close
+          </AntButton>,
+        ]}
+      >
+        {selectedDeviceDetails && (
+          <div>
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <Typography.Text strong>Location</Typography.Text>
+                <div>
+                  <Tag color="blue">{selectedDeviceDetails.location_name}</Tag>
+                </div>
+              </div>
+              <div>
+                <Typography.Text strong>Session ID</Typography.Text>
+                <div>
+                  <Tag color="purple">{selectedDeviceDetails.session_id}</Tag>
+                </div>
+              </div>
+              <div>
+                <Typography.Text strong>RSSI</Typography.Text>
+                <div>
+                  <Tag
+                    color={
+                      selectedDeviceDetails.rssi > -70
+                        ? "green"
+                        : selectedDeviceDetails.rssi > -90
+                        ? "orange"
+                        : "red"
+                    }
+                  >
+                    {selectedDeviceDetails.rssi} dBm
+                  </Tag>
+                </div>
+              </div>
+              <div>
+                <Typography.Text strong>Scan Time</Typography.Text>
+                <div>{formatTimestamp(selectedDeviceDetails.scan_time)}</div>
+              </div>
+              {selectedDeviceDetails.manufacturer_data && (
+                <div className="col-span-2">
+                  <Typography.Text strong>Manufacturer Data</Typography.Text>
+                  <div className="font-mono text-xs overflow-auto max-h-20 p-2 bg-gray-50 rounded">
+                    {selectedDeviceDetails.manufacturer_data}
+                  </div>
+                </div>
+              )}
+              {selectedDeviceDetails.service_uuids && (
+                <div className="col-span-2">
+                  <Typography.Text strong>Service UUIDs</Typography.Text>
+                  <div className="font-mono text-xs overflow-auto max-h-20 p-2 bg-gray-50 rounded">
+                    {selectedDeviceDetails.service_uuids}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="mb-4 text-center">
+              <h4 className="text-base font-medium text-gray-700 my-3">Time Series Data</h4>
+              <hr className="border-t border-gray-200" />
+            </div>
+
+            {loadingTimeseries ? (
+              <div className="flex items-center justify-center h-[300px]">
+                <Spin size="large" tip="Loading RSSI time series data..." />
+              </div>
+            ) : timeseriesError ? (
+              <div className="flex flex-col items-center justify-center h-[300px]">
+                <Typography.Text type="danger">{timeseriesError}</Typography.Text>
+              </div>
+            ) : timeseriesData.length === 0 ? (
+              <div className="flex items-center justify-center h-[300px]">
+                <div className="text-center">
+                  <Typography.Text type="secondary">
+                    No time series data available for this device in this session.
+                  </Typography.Text>
+                  <div className="mt-2">
+                    <Typography.Text type="secondary" className="text-xs">
+                      Time series data is only available for recent scans that were configured to
+                      collect detailed RSSI measurements.
+                    </Typography.Text>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div>
+                <LineChartComponent
+                  title={`RSSI Time Series for ${selectedDeviceDetails.device_id}`}
+                  data={signalChartData}
+                  height={300}
+                />
+                <div className="text-xs text-gray-500 mt-2 text-center">
+                  {timeseriesData.length} data points from session{" "}
+                  {selectedDeviceDetails.session_id}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </Modal>
     </DashboardLayout>
   );
 }

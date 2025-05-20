@@ -40,6 +40,7 @@ import {
 import DashboardLayout from "@/components/DashboardLayout";
 import supabase, { safeSupabaseOperation } from "@/lib/supabase";
 import SignalStrengthHistogram from "@/components/SignalStrengthHistogram";
+import DeviceDetailModal from "@/components/DeviceDetailModal";
 
 const { Title, Text } = Typography;
 const { Panel } = Collapse;
@@ -83,6 +84,8 @@ interface Device {
   notes: string;
   device_id?: string;
   scan_time?: string;
+  timestamp?: string; // For rssi_timeseries
+  sequence_number?: number; // For rssi_timeseries
 }
 
 interface LocationAnalysis {
@@ -95,6 +98,20 @@ interface LocationAnalysis {
   uniqueDevices: number;
 }
 
+// Interface for RSSI timeseries data
+interface RssiTimeseriesData {
+  id: number;
+  session_id: string;
+  device_id: string;
+  rssi: number;
+  timestamp: string;
+  sequence_number: number;
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+  created_at: string;
+}
+
 export default function MapsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [locations, setLocations] = useState<Location[]>([]);
@@ -104,6 +121,8 @@ export default function MapsPage() {
   const [selectedLocation, setSelectedLocation] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedDevice, setSelectedDevice] = useState<number | null>(null);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>();
+  const [isDeviceModalVisible, setIsDeviceModalVisible] = useState<boolean>(false);
   const [selectedLocationData, setSelectedLocationData] = useState<Location | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<string>("map");
@@ -112,6 +131,8 @@ export default function MapsPage() {
   const [dateRange, setDateRange] = useState<[string, string] | null>(null);
   const [selectedTimeFrame, setSelectedTimeFrame] = useState<string>("all");
   const [refreshKey, setRefreshKey] = useState<number>(0);
+  const [sessions, setSessions] = useState<string[]>([]);
+  const [selectedSession, setSelectedSession] = useState<string>("all");
 
   // Get the analysis data for locations
   const locationAnalysis = useMemo(() => {
@@ -147,7 +168,15 @@ export default function MapsPage() {
   // Apply filters when filter conditions change
   useEffect(() => {
     applyFilters();
-  }, [selectedLocation, searchQuery, locations, devices, rssiRange, selectedTimeFrame]);
+  }, [
+    selectedLocation,
+    searchQuery,
+    locations,
+    devices,
+    rssiRange,
+    selectedTimeFrame,
+    selectedSession,
+  ]);
 
   const fetchData = async () => {
     setIsLoading(true);
@@ -164,14 +193,43 @@ export default function MapsPage() {
         return;
       }
 
-      // Fetch devices
-      const { data: deviceData, error: deviceError } = await safeSupabaseOperation(() =>
-        supabase.from("scanned_device").select("*").order("scan_time", { ascending: false })
+      // Fetch unique session IDs from rssi_timeseries
+      const { data: sessionData, error: sessionError } = await safeSupabaseOperation(() =>
+        supabase
+          .from("rssi_timeseries")
+          .select("session_id")
+          .order("created_at", { ascending: false })
       );
 
-      if (deviceError) {
-        console.error("Error fetching devices:", deviceError);
-        setError(`Error fetching devices: ${deviceError.message}`);
+      if (sessionError) {
+        console.error("Error fetching sessions:", sessionError);
+      } else if (sessionData) {
+        // Extract unique session IDs
+        const uniqueSessions = [
+          ...new Set(sessionData.map((item: any) => item.session_id)),
+        ] as string[];
+        setSessions(uniqueSessions);
+      }
+
+      // Fetch RSSI timeseries data
+      const { data: rssiData, error: rssiError } = await safeSupabaseOperation(() => {
+        let query = supabase
+          .from("rssi_timeseries")
+          .select("*")
+          .order("timestamp", { ascending: false });
+
+        // If a specific session is selected, filter by it
+        if (selectedSession !== "all") {
+          query = query.eq("session_id", selectedSession);
+        }
+
+        // Limit to recent results to avoid overwhelming the map
+        return query.limit(500);
+      });
+
+      if (rssiError) {
+        console.error("Error fetching RSSI timeseries data:", rssiError);
+        setError(`Error fetching RSSI data: ${rssiError.message}`);
         return;
       }
 
@@ -210,43 +268,54 @@ export default function MapsPage() {
         locationNameToId.set(loc.name, loc.id);
       });
 
-      // Transform device data to match our interface
+      // Transform RSSI timeseries data to match our device interface
       let transformedDevices: Device[] = [];
 
-      if (deviceData && deviceData.length > 0) {
-        transformedDevices = deviceData
-          .map((dev: any) => {
-            // Try to handle different potential field name formats
-            const lat = dev.device_latitude || dev.lat || dev.latitude;
-            const lng = dev.device_longitude || dev.lng || dev.longitude;
+      if (rssiData && rssiData.length > 0) {
+        // For device positioning on the map, group by device and take most recent position per device
+        const deviceMap = new Map<string, any>();
 
-            // Try to get location_id - it might be direct, or we might need to look it up by name
-            let locationId = dev.location_id || 0;
+        rssiData.forEach((rssi: RssiTimeseriesData) => {
+          if (
+            !deviceMap.has(rssi.device_id) ||
+            new Date(rssi.timestamp) > new Date(deviceMap.get(rssi.device_id).timestamp)
+          ) {
+            deviceMap.set(rssi.device_id, rssi);
+          }
+        });
 
-            // If we have a location_name but no location_id, try to find the ID from our location map
-            if (
-              (!locationId || locationId === 0) &&
-              dev.location_name &&
-              locationNameToId.has(dev.location_name)
-            ) {
-              locationId = locationNameToId.get(dev.location_name) || 0;
-            }
-
+        transformedDevices = Array.from(deviceMap.values())
+          .map((rssi: any) => {
             // Skip devices with invalid coordinates
-            if (!lat || !lng || isNaN(lat) || isNaN(lng)) {
+            if (
+              !rssi.latitude ||
+              !rssi.longitude ||
+              isNaN(rssi.latitude) ||
+              isNaN(rssi.longitude)
+            ) {
               return null;
             }
 
+            // Find if there's a matching location for this device's session
+            // This is a simplification - you might need a more robust way to associate devices with locations
+            const matchingLocation = transformedLocations.find(
+              (loc) =>
+                Math.abs(loc.lat - rssi.latitude) < 0.001 &&
+                Math.abs(loc.lng - rssi.longitude) < 0.001
+            );
+
             const item = {
-              id: dev.id,
-              name: dev.device_name || dev.name || dev.device_id || "Unknown Device",
-              location_id: locationId,
-              lat: Number(lat),
-              lng: Number(lng),
-              rssi: dev.rssi || -100,
-              notes: dev.location_notes || dev.notes || "",
-              device_id: dev.device_id,
-              scan_time: dev.scan_time,
+              id: rssi.id,
+              name: rssi.device_id || "Unknown Device",
+              location_id: matchingLocation?.id || 0,
+              lat: Number(rssi.latitude),
+              lng: Number(rssi.longitude),
+              rssi: rssi.rssi || -100,
+              notes: "",
+              device_id: rssi.device_id,
+              scan_time: rssi.timestamp,
+              timestamp: rssi.timestamp,
+              sequence_number: rssi.sequence_number,
             };
 
             return item;
@@ -304,6 +373,16 @@ export default function MapsPage() {
       );
     }
 
+    // Filter by session
+    if (selectedSession !== "all") {
+      // Since we're now filtering at the query level, this is less important
+      // but keeping it for UI consistency
+      filteredDevs = filteredDevs.filter((dev) => {
+        // Device objects created from rssi_timeseries will have a session_id property
+        return (dev as any).session_id === selectedSession;
+      });
+    }
+
     // Filter by time frame
     if (selectedTimeFrame !== "all" && selectedTimeFrame !== "") {
       const now = new Date();
@@ -322,8 +401,10 @@ export default function MapsPage() {
       }
 
       filteredDevs = filteredDevs.filter((dev) => {
-        if (!dev.scan_time) return true;
-        return new Date(dev.scan_time) >= cutoffDate;
+        // Use timestamp for rssi_timeseries data or scan_time for legacy data
+        const timeField = dev.timestamp || dev.scan_time;
+        if (!timeField) return true;
+        return new Date(timeField) >= cutoffDate;
       });
     }
 
@@ -368,6 +449,12 @@ export default function MapsPage() {
     if (device) {
       const locationId = device.location_id;
       setSelectedLocation(locationId.toString());
+
+      // Open the device detail modal with the device ID
+      if (device.device_id) {
+        setSelectedDeviceId(device.device_id);
+        setIsDeviceModalVisible(true);
+      }
     }
   };
 
@@ -487,7 +574,7 @@ export default function MapsPage() {
   }, [selectedLocationData, filteredDevices]);
 
   const getTopDevices = () => {
-    // Group devices by device_id or name, taking the maximum RSSI for each
+    // Group devices by device_id, taking the maximum RSSI for each
     const deviceGroups = new Map<string, Device>();
 
     filteredDevices.forEach((device) => {
@@ -513,7 +600,8 @@ export default function MapsPage() {
               BLE Device Map
             </h1>
             <p className="text-gray-500 mt-1">
-              Visualize and analyze BLE device locations and signal strength across your environment
+              Visualize and analyze BLE device locations and signal strength recorded every 0.5
+              seconds
             </p>
           </div>
           <div className="mt-3 md:mt-0 flex items-center gap-2 self-end">
@@ -658,6 +746,41 @@ export default function MapsPage() {
                                     </div>
                                   </div>
 
+                                  {sessions.length > 0 && (
+                                    <div>
+                                      <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                                        Scanning Session
+                                      </label>
+                                      <div className="relative">
+                                        <select
+                                          value={selectedSession}
+                                          onChange={(e) => setSelectedSession(e.target.value)}
+                                          className="w-full h-10 pl-3 pr-10 py-2 text-sm text-gray-900 bg-white border border-gray-200 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-primary-200 focus:border-primary-300"
+                                        >
+                                          <option value="all">All Sessions</option>
+                                          {sessions.map((session) => (
+                                            <option key={session} value={session}>
+                                              {session}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none">
+                                          <svg
+                                            className="w-4 h-4 text-gray-400"
+                                            viewBox="0 0 20 20"
+                                            fill="currentColor"
+                                          >
+                                            <path
+                                              fillRule="evenodd"
+                                              d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                              clipRule="evenodd"
+                                            />
+                                          </svg>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  )}
+
                                   <div>
                                     <label className="block text-sm font-medium text-gray-700 mb-1.5">
                                       Search
@@ -739,6 +862,7 @@ export default function MapsPage() {
                                       variant="flat"
                                       onPress={() => {
                                         setSelectedLocation("all");
+                                        setSelectedSession("all");
                                         setSearchQuery("");
                                         setRssiRange([-100, -30]);
                                         setSelectedTimeFrame("all");
@@ -817,6 +941,17 @@ export default function MapsPage() {
                           )}
                         </div>
                       </div>
+
+                      {!isLoading && filteredDevices.length > 0 && (
+                        <Alert
+                          message="Updated BLE Scanner Data Format"
+                          description="The map now displays BLE signal strength data recorded every 0.5 seconds. Use the session filter to view specific scanning sessions."
+                          type="info"
+                          showIcon
+                          closable
+                          className="mb-4"
+                        />
+                      )}
 
                       {!isLoading && filteredDevices.length > 0 && (
                         <Card className="shadow-sm border-none mt-4 mb-4">
@@ -1024,15 +1159,20 @@ export default function MapsPage() {
                               <div className="text-center mt-3">
                                 <p className="text-sm text-gray-600">
                                   Signal strength distribution across {filteredDevices.length}{" "}
-                                  devices
+                                  records
                                 </p>
+                                {selectedSession !== "all" && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    Session: {selectedSession}
+                                  </p>
+                                )}
                               </div>
                             </div>
                             <div className="col-span-1 flex flex-col justify-center space-y-2">
                               <Card className="shadow-sm bg-gray-50">
                                 <CardBody className="p-4">
                                   <Statistic
-                                    title={<span className="text-gray-600">Total Devices</span>}
+                                    title={<span className="text-gray-600">Total Records</span>}
                                     value={devices.length}
                                     valueStyle={{ fontSize: "1.5rem" }}
                                   />
@@ -1073,15 +1213,8 @@ export default function MapsPage() {
                               <Card className="shadow-sm bg-gray-50">
                                 <CardBody className="p-4">
                                   <Statistic
-                                    title={<span className="text-gray-600">Range</span>}
-                                    value={
-                                      devices.length > 0
-                                        ? `${Math.min(...devices.map((d) => d.rssi))} to ${Math.max(
-                                            ...devices.map((d) => d.rssi)
-                                          )}`
-                                        : "N/A"
-                                    }
-                                    suffix="dBm"
+                                    title={<span className="text-gray-600">Unique Devices</span>}
+                                    value={new Set(devices.map((d) => d.device_id)).size}
                                     valueStyle={{ fontSize: "1.5rem" }}
                                   />
                                 </CardBody>
@@ -1090,6 +1223,27 @@ export default function MapsPage() {
                           </div>
                         </CardBody>
                       </Card>
+
+                      {selectedDevice && (
+                        <Card className="shadow-sm border-none mb-6">
+                          <CardHeader className="bg-primary-50 py-3 px-4">
+                            <h2 className="text-lg font-semibold flex items-center">
+                              <SignalIcon className="h-5 w-5 mr-2 text-primary" />
+                              Device RSSI Time Series
+                            </h2>
+                          </CardHeader>
+                          <CardBody>
+                            <div className="text-center py-4">
+                              <Alert
+                                message="Feature Coming Soon"
+                                description="The RSSI time series visualization for individual devices will be available in a future update."
+                                type="info"
+                                showIcon
+                              />
+                            </div>
+                          </CardBody>
+                        </Card>
+                      )}
 
                       <Card className="shadow-sm border-none">
                         <CardHeader className="bg-primary-50 py-3 px-4">
@@ -1118,8 +1272,8 @@ export default function MapsPage() {
                                     </div>
 
                                     <div className="flex justify-between text-gray-500 text-sm mb-3">
-                                      <span>{location.deviceCount} device entries</span>
-                                      <span>{location.uniqueDevices} unique</span>
+                                      <span>{location.deviceCount} records</span>
+                                      <span>{location.uniqueDevices} unique devices</span>
                                     </div>
 
                                     <div>
@@ -1183,8 +1337,10 @@ export default function MapsPage() {
             <Empty
               description={
                 <div>
-                  <p className="text-lg mb-2">No Location Data Available</p>
-                  <p className="text-gray-500 mb-4">No location data was found in the database.</p>
+                  <p className="text-lg mb-2">No RSSI Timeseries Data Available</p>
+                  <p className="text-gray-500 mb-4">
+                    No location or RSSI timeseries data was found in the database.
+                  </p>
                   <Button color="primary" onPress={addSampleData}>
                     Use Sample Data
                   </Button>
@@ -1195,6 +1351,14 @@ export default function MapsPage() {
           </div>
         )}
       </div>
+      {isDeviceModalVisible && selectedDeviceId && (
+        <DeviceDetailModal
+          deviceId={selectedDeviceId}
+          visible={isDeviceModalVisible}
+          onClose={() => setIsDeviceModalVisible(false)}
+          sessionId={selectedSession !== "all" ? selectedSession : undefined}
+        />
+      )}
     </DashboardLayout>
   );
 }

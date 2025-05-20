@@ -22,6 +22,9 @@ interface Device {
   rssi: number;
   notes: string;
   device_id?: string;
+  scan_time?: string;
+  timestamp?: string; // For rssi_timeseries
+  sequence_number?: number; // For rssi_timeseries
 }
 
 interface MapComponentProps {
@@ -126,12 +129,22 @@ export default function MapComponent({
 
     // Add location markers
     const deviceCountsByLocation = new Map<number, number>();
+    const devicesByIdMap = new Map<string, Device[]>();
 
-    // Count devices at each location
+    // Group devices by device_id for timeseries data
     devices.forEach((device) => {
+      // Count by location
       if (device.location_id) {
         const count = deviceCountsByLocation.get(device.location_id) || 0;
         deviceCountsByLocation.set(device.location_id, count + 1);
+      }
+
+      // Group by device ID
+      if (device.device_id) {
+        if (!devicesByIdMap.has(device.device_id)) {
+          devicesByIdMap.set(device.device_id, []);
+        }
+        devicesByIdMap.get(device.device_id)!.push(device);
       }
     });
 
@@ -152,19 +165,30 @@ export default function MapComponent({
         gradient: { 0.4: "blue", 0.6: "lime", 0.8: "yellow", 1.0: "red" },
       }).addTo(mapRef.current);
     } else {
-      // Add device markers if not showing heatmap
-      devices.forEach((device) => {
+      // Process devices by ID to show the latest position for each device with a trail of previous positions
+      devicesByIdMap.forEach((deviceGroup, deviceId) => {
+        // Sort by timestamp if available, or creation date
+        const sortedDevices = deviceGroup.sort((a, b) => {
+          const aTime = a.timestamp || a.scan_time || "";
+          const bTime = b.timestamp || b.scan_time || "";
+          return new Date(bTime).getTime() - new Date(aTime).getTime();
+        });
+
+        // The most recent device position
+        const latestDevice = sortedDevices[0];
+
+        // For the latest position, add a larger, more visible marker
         // Calculate color based on RSSI (-30 to -100 dBm typical range)
         let color = "#ff0000"; // Default red
 
-        if (device.rssi > -65) {
+        if (latestDevice.rssi > -65) {
           color = "#4ade80"; // Green for strong signal
-        } else if (device.rssi > -80) {
+        } else if (latestDevice.rssi > -80) {
           color = "#fbbf24"; // Yellow/orange for medium signal
         }
 
         // Calculate opacity based on RSSI
-        const opacity = Math.max(0.6, Math.min(0.95, 1 - (Math.abs(device.rssi) - 30) / 70));
+        const opacity = Math.max(0.6, Math.min(0.95, 1 - (Math.abs(latestDevice.rssi) - 30) / 70));
 
         const deviceIcon = L.divIcon({
           className: "custom-device-marker",
@@ -181,28 +205,80 @@ export default function MapComponent({
           iconAnchor: [7, 7],
         });
 
-        const marker = L.marker([device.lat, device.lng], {
+        const marker = L.marker([latestDevice.lat, latestDevice.lng], {
           icon: deviceIcon,
-          title: device.name,
+          title: latestDevice.name,
         }).addTo(markersRef.current!);
 
         // Add location name to tooltip if available
-        const location = device.location_id
-          ? locations.find((l) => l.id === device.location_id)?.name
+        const location = latestDevice.location_id
+          ? locations.find((l) => l.id === latestDevice.location_id)?.name
           : "";
-        const deviceIdText = device.device_id ? `ID: ${device.device_id}` : "";
+        const deviceIdText = latestDevice.device_id ? `ID: ${latestDevice.device_id}` : "";
+        const timeText = latestDevice.timestamp || latestDevice.scan_time || "";
+        const formattedTime = timeText ? new Date(timeText).toLocaleTimeString() : "";
+
         const tooltipText = `
           <div>
-            <strong>${device.name}</strong><br/>
+            <strong>${latestDevice.name}</strong><br/>
             ${deviceIdText ? `${deviceIdText}<br/>` : ""}
-            Signal: <strong>${device.rssi} dBm</strong>
+            Signal: <strong>${latestDevice.rssi} dBm</strong>
             ${location ? `<br/>Location: ${location}` : ""}
+            ${formattedTime ? `<br/>Time: ${formattedTime}` : ""}
+            ${latestDevice.sequence_number ? `<br/>Sequence: ${latestDevice.sequence_number}` : ""}
           </div>`;
 
         marker.bindTooltip(tooltipText, { offset: [0, -7] });
-        marker.on("click", () => onDeviceSelect(device.id));
+        marker.on("click", () => onDeviceSelect(latestDevice.id));
 
-        bounds.extend([device.lat, device.lng]);
+        bounds.extend([latestDevice.lat, latestDevice.lng]);
+
+        // Add smaller markers for historical positions (but only if we're showing timeseries data)
+        if (sortedDevices.length > 1 && sortedDevices[0].timestamp) {
+          // Take only the 10 most recent historical positions to avoid cluttering the map
+          const historyPoints = sortedDevices.slice(1, 11);
+
+          // Create a polyline for the device path
+          const pathPoints = [
+            [latestDevice.lat, latestDevice.lng],
+            ...historyPoints.map((d) => [d.lat, d.lng]),
+          ];
+
+          L.polyline(pathPoints as [number, number][], {
+            color: color,
+            weight: 2,
+            opacity: 0.5,
+            dashArray: "5, 5",
+          }).addTo(markersRef.current!);
+
+          // Add small dots for historical positions
+          historyPoints.forEach((historyDevice, index) => {
+            // Make markers progressively smaller and more transparent the older they are
+            const sizeScale = Math.max(0.4, 1 - index / historyPoints.length);
+            const opacityScale = Math.max(0.3, 1 - index / historyPoints.length);
+
+            const historyIcon = L.divIcon({
+              className: "history-device-marker",
+              html: `<div style="
+                background-color: ${color};
+                opacity: ${opacityScale * opacity};
+                border: 1px solid white;
+                border-radius: 50%;
+                width: ${8 * sizeScale}px;
+                height: ${8 * sizeScale}px;
+              "></div>`,
+              iconSize: [8, 8],
+              iconAnchor: [4, 4],
+            });
+
+            const historyMarker = L.marker([historyDevice.lat, historyDevice.lng], {
+              icon: historyIcon,
+              interactive: false, // Disable interactions with historical markers
+            }).addTo(markersRef.current!);
+
+            bounds.extend([historyDevice.lat, historyDevice.lng]);
+          });
+        }
       });
     }
 
@@ -241,7 +317,7 @@ export default function MapComponent({
         `
         <div>
           <strong>${location.name}</strong><br/>
-          ${deviceCount} device${deviceCount !== 1 ? "s" : ""}
+          ${deviceCount} record${deviceCount !== 1 ? "s" : ""}
         </div>
       `,
         { offset: [0, -12] }
