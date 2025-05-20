@@ -1,9 +1,7 @@
 "use client";
 
 import { ConfigProvider, theme } from "antd";
-import { ThemeProvider as NextThemesProvider } from "next-themes";
 import { useEffect, useState } from "react";
-import { HeroUIProvider } from "@heroui/react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [mounted, setMounted] = useState(false);
@@ -13,21 +11,22 @@ export function Providers({ children }: { children: React.ReactNode }) {
     setMounted(true);
   }, []);
 
+  if (!mounted) {
+    // Return a simple placeholder while client-side rendering is loading
+    return <div style={{ visibility: "hidden" }}>{children}</div>;
+  }
+
   return (
-    <NextThemesProvider attribute="class" defaultTheme="light">
-      {mounted && (
-        <ConfigProvider
-          theme={{
-            token: {
-              colorPrimary: "#0c66a4", // matches the primary color in CSS
-              borderRadius: 8,
-            },
-            algorithm: theme.defaultAlgorithm,
-          }}
-        >
-          <HeroUIProvider>{children}</HeroUIProvider>
-        </ConfigProvider>
-      )}
-    </NextThemesProvider>
+    <ConfigProvider
+      theme={{
+        token: {
+          colorPrimary: "#0c66a4",
+          borderRadius: 8,
+        },
+        algorithm: theme.defaultAlgorithm,
+      }}
+    >
+      {children}
+    </ConfigProvider>
   );
 }

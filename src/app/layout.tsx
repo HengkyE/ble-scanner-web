@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import { Providers } from "./providers";
 import { Metadata } from "next";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-sans" });
+const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "BLE Scanner Analytics",
@@ -17,8 +17,17 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.className} antialiased bg-background min-h-screen`}>
-        <Providers>{children}</Providers>
+      <body
+        style={{
+          margin: 0,
+          minHeight: "100vh",
+          fontFamily: inter.style.fontFamily,
+          backgroundColor: "#f5f5f5",
+        }}
+      >
+        <Providers>
+          <main style={{ maxWidth: "1200px", margin: "0 auto", padding: "20px" }}>{children}</main>
+        </Providers>
       </body>
     </html>
   );

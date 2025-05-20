@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Spin, Divider, Card, Button } from "antd";
+import { Spin, Card, Button } from "antd";
 import { formatDistanceToNow } from "date-fns";
 import { RightOutlined } from "@ant-design/icons";
 import Link from "next/link";
@@ -24,6 +24,7 @@ interface ScannedDevice {
 
 export default function Dashboard() {
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [stats, setStats] = useState({
     deviceCount: 0,
     scanCount: 0,
@@ -54,8 +55,9 @@ export default function Dashboard() {
   useEffect(() => {
     const fetchDashboardData = async () => {
       setIsLoading(true);
+      setError(null);
+
       try {
-        // Get devices data
         const { data: deviceData, error: deviceError } = await safeSupabaseOperation(() =>
           supabase
             .from("scanned_device")
@@ -64,30 +66,24 @@ export default function Dashboard() {
             .limit(1000)
         );
 
-        // Get locations data
-        const { data: locationData, error: locationError } = await safeSupabaseOperation(() =>
-          supabase
-            .from("location_scanned")
-            .select("*")
-            .order("created_at", { ascending: false })
-            .limit(20)
-        );
+        if (deviceError) {
+          throw new Error(deviceError.message);
+        }
 
-        if (deviceError || locationError) {
-          console.error("Error fetching data:", deviceError || locationError);
-          return;
+        if (!deviceData) {
+          throw new Error("No data received");
         }
 
         // Process stats
-        const uniqueDeviceIds = new Set(deviceData?.map((d: any) => d.device_id) || []);
+        const uniqueDeviceIds = new Set(deviceData.map((d: any) => d.device_id));
         const uniqueLocations = new Set(
-          deviceData?.map((d: any) => d.location_name).filter(Boolean) || []
+          deviceData.map((d: any) => d.location_name).filter(Boolean)
         );
-        const lastUpdateTime = deviceData?.[0]?.scan_time || new Date().toISOString();
+        const lastUpdateTime = deviceData[0]?.scan_time || new Date().toISOString();
 
         setStats({
           deviceCount: uniqueDeviceIds.size,
-          scanCount: deviceData?.length || 0,
+          scanCount: deviceData.length,
           locationCount: uniqueLocations.size,
           lastUpdate: formatDistanceToNow(new Date(lastUpdateTime), {
             addSuffix: true,
@@ -122,15 +118,6 @@ export default function Dashboard() {
             return stats.rssiSum / stats.count;
           });
 
-          // Color palette
-          const colors = [
-            { border: "rgb(53, 162, 235)", bg: "rgba(53, 162, 235, 0.5)" },
-            { border: "rgb(255, 99, 132)", bg: "rgba(255, 99, 132, 0.5)" },
-            { border: "rgb(75, 192, 192)", bg: "rgba(75, 192, 192, 0.5)" },
-            { border: "rgb(255, 205, 86)", bg: "rgba(255, 205, 86, 0.5)" },
-            { border: "rgb(153, 102, 255)", bg: "rgba(153, 102, 255, 0.5)" },
-          ];
-
           setRssiByLocationData({
             labels: locations,
             datasets: [
@@ -144,7 +131,6 @@ export default function Dashboard() {
           });
 
           // Process RSSI over time
-          // Get the most recent scans (up to 20)
           const recentScans = [...deviceData]
             .sort((a, b) => new Date(b.scan_time).getTime() - new Date(a.scan_time).getTime())
             .slice(0, 20)
@@ -173,6 +159,7 @@ export default function Dashboard() {
         }
       } catch (error) {
         console.error("Error in fetchDashboardData:", error);
+        setError(error instanceof Error ? error.message : "An unknown error occurred");
       } finally {
         setIsLoading(false);
       }
@@ -180,6 +167,20 @@ export default function Dashboard() {
 
     fetchDashboardData();
   }, []);
+
+  if (error) {
+    return (
+      <DashboardLayout>
+        <div className="text-center p-8">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Error</h2>
+          <p className="text-gray-700 mb-4">{error}</p>
+          <Button onClick={() => window.location.reload()} type="primary">
+            Retry
+          </Button>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -192,38 +193,26 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-            <div className="col-span-1">
-              <StatCard
-                title="Total Devices"
-                value={stats.deviceCount}
-                description="Unique BLE devices detected"
-                className="w-full"
-              />
-            </div>
-            <div className="col-span-1">
-              <StatCard
-                title="Device Scans"
-                value={stats.scanCount}
-                description="Total BLE device scans recorded"
-                className="w-full"
-              />
-            </div>
-            <div className="col-span-1">
-              <StatCard
-                title="Locations"
-                value={stats.locationCount}
-                description="Number of scan locations"
-                className="w-full"
-              />
-            </div>
-            <div className="col-span-1">
-              <StatCard
-                title="Last Update"
-                value={stats.lastUpdate}
-                description="Time since most recent scan"
-                className="w-full"
-              />
-            </div>
+            <StatCard
+              title="Total Devices"
+              value={stats.deviceCount}
+              description="Unique BLE devices detected"
+            />
+            <StatCard
+              title="Device Scans"
+              value={stats.scanCount}
+              description="Total BLE device scans recorded"
+            />
+            <StatCard
+              title="Locations"
+              value={stats.locationCount}
+              description="Number of scan locations"
+            />
+            <StatCard
+              title="Last Update"
+              value={stats.lastUpdate}
+              description="Time since most recent scan"
+            />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">

@@ -45,35 +45,7 @@ import DeviceDetailModal from "@/components/DeviceDetailModal";
 const { Title, Text } = Typography;
 const { Panel } = Collapse;
 
-// Dynamically import the Map component to avoid SSR issues with leaflet
-const MapComponent = dynamic(() => import("@/components/MapComponent"), {
-  ssr: false,
-  loading: () => (
-    <div
-      style={{
-        height: "500px",
-        background: "#f0f0f0",
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-      }}
-    >
-      <Spinner size="lg" />
-    </div>
-  ),
-});
-
-interface Location {
-  id: number;
-  name: string;
-  lat: number;
-  lng: number;
-  notes: string;
-  createdAt?: string;
-  deviceCount?: number;
-  averageRssi?: number;
-}
-
+// Modify the Device interface to add session_id
 interface Device {
   id: number;
   name: string;
@@ -86,6 +58,18 @@ interface Device {
   scan_time?: string;
   timestamp?: string; // For rssi_timeseries
   sequence_number?: number; // For rssi_timeseries
+  session_id?: string; // Added for rssi_timeseries
+}
+
+interface Location {
+  id: number;
+  name: string;
+  lat: number;
+  lng: number;
+  notes: string;
+  createdAt?: string;
+  deviceCount?: number;
+  averageRssi?: number;
 }
 
 interface LocationAnalysis {
@@ -106,9 +90,9 @@ interface RssiTimeseriesData {
   rssi: number;
   timestamp: string;
   sequence_number: number;
-  latitude: number;
-  longitude: number;
-  accuracy: number;
+  latitude: number | null;
+  longitude: number | null;
+  accuracy: number | null;
   created_at: string;
 }
 
@@ -216,6 +200,8 @@ export default function MapsPage() {
         let query = supabase
           .from("rssi_timeseries")
           .select("*")
+          .not("latitude", "is", null)
+          .not("longitude", "is", null)
           .order("timestamp", { ascending: false });
 
         // If a specific session is selected, filter by it
@@ -276,35 +262,45 @@ export default function MapsPage() {
         const deviceMap = new Map<string, any>();
 
         rssiData.forEach((rssi: RssiTimeseriesData) => {
+          // Skip entries without valid coordinates
           if (
-            !deviceMap.has(rssi.device_id) ||
-            new Date(rssi.timestamp) > new Date(deviceMap.get(rssi.device_id).timestamp)
+            !rssi.latitude ||
+            !rssi.longitude ||
+            isNaN(Number(rssi.latitude)) ||
+            isNaN(Number(rssi.longitude))
           ) {
-            deviceMap.set(rssi.device_id, rssi);
+            return;
+          }
+
+          const deviceKey = rssi.device_id;
+          if (
+            !deviceMap.has(deviceKey) ||
+            new Date(rssi.timestamp) > new Date(deviceMap.get(deviceKey).timestamp)
+          ) {
+            deviceMap.set(deviceKey, rssi);
           }
         });
 
         transformedDevices = Array.from(deviceMap.values())
-          .map((rssi: any) => {
-            // Skip devices with invalid coordinates
+          .map((rssi: RssiTimeseriesData) => {
+            // Skip devices with invalid coordinates (already filtered above, but double-check)
             if (
               !rssi.latitude ||
               !rssi.longitude ||
-              isNaN(rssi.latitude) ||
-              isNaN(rssi.longitude)
+              isNaN(Number(rssi.latitude)) ||
+              isNaN(Number(rssi.longitude))
             ) {
               return null;
             }
 
-            // Find if there's a matching location for this device's session
-            // This is a simplification - you might need a more robust way to associate devices with locations
+            // Find if there's a matching location for this device based on coordinates
             const matchingLocation = transformedLocations.find(
               (loc) =>
-                Math.abs(loc.lat - rssi.latitude) < 0.001 &&
-                Math.abs(loc.lng - rssi.longitude) < 0.001
+                Math.abs(loc.lat - Number(rssi.latitude)) < 0.0005 &&
+                Math.abs(loc.lng - Number(rssi.longitude)) < 0.0005
             );
 
-            const item = {
+            const item: Device = {
               id: rssi.id,
               name: rssi.device_id || "Unknown Device",
               location_id: matchingLocation?.id || 0,
@@ -316,6 +312,7 @@ export default function MapsPage() {
               scan_time: rssi.timestamp,
               timestamp: rssi.timestamp,
               sequence_number: rssi.sequence_number,
+              session_id: rssi.session_id,
             };
 
             return item;
@@ -514,6 +511,7 @@ export default function MapsPage() {
           lng: location.lng + lngOffset,
           rssi,
           notes: `Sample device at ${location.name}`,
+          session_id: "all",
         });
       }
     });
@@ -589,6 +587,45 @@ export default function MapsPage() {
       .sort((a, b) => b.rssi - a.rssi)
       .slice(0, 5);
   };
+
+  // Update the dynamic import with error boundary handling
+  const MapComponent = dynamic(
+    () =>
+      import("@/components/MapComponent").catch((err) => {
+        console.error("Error loading MapComponent:", err);
+        return () => (
+          <div
+            style={{
+              height: "500px",
+              background: "#f0f0f0",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column",
+            }}
+          >
+            <div className="text-red-500 mb-4">Error loading map component</div>
+            <Spinner size="lg" />
+          </div>
+        );
+      }),
+    {
+      ssr: false,
+      loading: () => (
+        <div
+          style={{
+            height: "500px",
+            background: "#f0f0f0",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <Spinner size="lg" />
+        </div>
+      ),
+    }
+  );
 
   return (
     <DashboardLayout>

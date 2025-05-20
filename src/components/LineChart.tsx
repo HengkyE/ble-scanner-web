@@ -1,22 +1,7 @@
 "use client";
 
-import React from "react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  ChartOptions,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-import { Card, Divider } from "antd";
-import { useTheme } from "next-themes";
-
-ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend);
+import React, { useEffect, useState } from "react";
+import { Card, Divider, Spin } from "antd";
 
 interface LineChartProps {
   title: string;
@@ -40,15 +25,52 @@ export default function LineChartComponent({
   height = 300,
   options = {},
 }: LineChartProps) {
-  const { theme } = useTheme();
-  const isDark = theme === "dark";
+  const [isClient, setIsClient] = useState(false);
+  const [ChartComponent, setChartComponent] = useState<any>(null);
 
-  const textColor = isDark ? "#e5e7eb" : "#4B5563";
-  const gridColor = isDark ? "rgba(255, 255, 255, 0.1)" : "#F3F4F6";
-  const tooltipBackgroundColor = isDark ? "rgba(0, 0, 0, 0.8)" : "rgba(255, 255, 255, 0.9)";
-  const tooltipTextColor = isDark ? "#e5e7eb" : "#111827";
+  useEffect(() => {
+    // Only load Chart.js in the browser
+    const loadChart = async () => {
+      try {
+        if (typeof window !== "undefined") {
+          // Dynamically import Chart.js components
+          const {
+            Chart,
+            CategoryScale,
+            LinearScale,
+            PointElement,
+            LineElement,
+            Title,
+            Tooltip,
+            Legend,
+          } = await import("chart.js");
+          const { Line } = await import("react-chartjs-2");
 
-  const defaultOptions: ChartOptions<"line"> = {
+          // Register Chart.js components
+          Chart.register(
+            CategoryScale,
+            LinearScale,
+            PointElement,
+            LineElement,
+            Title,
+            Tooltip,
+            Legend
+          );
+
+          // Set the Line component
+          setChartComponent(() => Line);
+          setIsClient(true);
+        }
+      } catch (error) {
+        console.error("Failed to load Chart.js:", error);
+      }
+    };
+
+    loadChart();
+  }, []);
+
+  // Default chart options
+  const defaultOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -60,7 +82,7 @@ export default function LineChartComponent({
             family: "Inter",
             size: 12,
           },
-          color: textColor,
+          color: "#4B5563",
           padding: 20,
         },
       },
@@ -68,10 +90,10 @@ export default function LineChartComponent({
         display: false,
       },
       tooltip: {
-        backgroundColor: tooltipBackgroundColor,
-        titleColor: tooltipTextColor,
-        bodyColor: textColor,
-        borderColor: isDark ? "rgba(255, 255, 255, 0.1)" : "#E5E7EB",
+        backgroundColor: "rgba(255, 255, 255, 0.9)",
+        titleColor: "#111827",
+        bodyColor: "#4B5563",
+        borderColor: "#E5E7EB",
         borderWidth: 1,
         padding: 12,
         boxPadding: 6,
@@ -89,10 +111,10 @@ export default function LineChartComponent({
       y: {
         beginAtZero: false,
         grid: {
-          color: gridColor,
+          color: "#F3F4F6",
         },
         ticks: {
-          color: textColor,
+          color: "#4B5563",
           padding: 8,
         },
         border: {
@@ -104,7 +126,7 @@ export default function LineChartComponent({
           display: false,
         },
         ticks: {
-          color: textColor,
+          color: "#4B5563",
           padding: 8,
         },
       },
@@ -130,7 +152,13 @@ export default function LineChartComponent({
     >
       <Divider className="my-1" />
       <div style={{ height: `${height}px` }} className="p-2">
-        <Line data={data} options={chartOptions} />
+        {!isClient || !ChartComponent ? (
+          <div className="flex items-center justify-center h-full">
+            <Spin tip="Loading chart..." />
+          </div>
+        ) : (
+          <ChartComponent data={data} options={chartOptions} />
+        )}
       </div>
     </Card>
   );
