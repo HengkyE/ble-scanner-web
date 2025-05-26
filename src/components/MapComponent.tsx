@@ -1,8 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import L from "leaflet";
-import "leaflet/dist/leaflet.css";
+import dynamic from "next/dynamic";
+
+// Import Leaflet types but not the actual library
+import type { Map as LeafletMap, LayerGroup, LatLngBounds, Layer } from "leaflet";
+
+// We'll import Leaflet dynamically on the client side
+let L: any;
 
 interface Location {
   id: number;
@@ -43,89 +48,85 @@ export default function MapComponent({
   onLocationSelect,
   showHeatmap = false,
 }: MapComponentProps) {
-  const mapRef = useRef<L.Map | null>(null);
+  const mapRef = useRef<LeafletMap | null>(null);
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const markersRef = useRef<L.LayerGroup | null>(null);
-  const heatmapLayerRef = useRef<any>(null);
+  const markersRef = useRef<LayerGroup | null>(null);
+  const heatmapLayerRef = useRef<Layer | null>(null);
   const [debug, setDebug] = useState<string>("");
-  const [leafletHeat, setLeafletHeat] = useState<any>(null);
+  const [leafletHeat, setLeafletHeat] = useState<boolean>(false);
+  const [isLeafletLoaded, setIsLeafletLoaded] = useState<boolean>(false);
 
-  // Initialize Leaflet and load heat module dynamically
+  // Initialize Leaflet on the client side
   useEffect(() => {
-    // Fix for Leaflet's icon issue in Next.js
-    const fixLeafletIcon = () => {
-      // @ts-ignore
-      delete L.Icon.Default.prototype._getIconUrl;
-      L.Icon.Default.mergeOptions({
-        iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
-        iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
-        shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
-      });
-    };
+    const initializeLeaflet = async () => {
+      if (typeof window !== "undefined" && !isLeafletLoaded) {
+        try {
+          // Dynamically import Leaflet
+          const leaflet = await import("leaflet");
+          L = leaflet.default;
 
-    // Initialize the map
-    const initializeMap = () => {
-      if (mapContainerRef.current && !mapRef.current) {
-        fixLeafletIcon();
+          // Add Leaflet CSS
+          const link = document.createElement("link");
+          link.rel = "stylesheet";
+          link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
+          link.integrity = "sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=";
+          link.crossOrigin = "";
+          document.head.appendChild(link);
 
-        // Initialize map
-        mapRef.current = L.map(mapContainerRef.current, {
-          zoomControl: false,
-          attributionControl: false,
-        }).setView([0, 0], 2);
+          // Fix Leaflet's icon paths
+          L.Icon.Default.mergeOptions({
+            iconRetinaUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon-2x.png",
+            iconUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-icon.png",
+            shadowUrl: "https://unpkg.com/leaflet@1.7.1/dist/images/marker-shadow.png",
+          });
 
-        // Add zoom control to the top-right
-        L.control.zoom({ position: "topright" }).addTo(mapRef.current);
+          setIsLeafletLoaded(true);
 
-        // Add attribution control to the bottom-right
-        L.control
-          .attribution({
-            position: "bottomright",
-            prefix: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-          })
-          .addTo(mapRef.current);
+          // Initialize map if not already initialized
+          if (mapContainerRef.current && !mapRef.current) {
+            // Initialize map
+            mapRef.current = L.map(mapContainerRef.current, {
+              zoomControl: false,
+              attributionControl: false,
+            }).setView([0, 0], 2);
 
-        // Add tile layer - using a more modern style
-        L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
-          attribution:
-            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-          maxZoom: 19,
-        }).addTo(mapRef.current);
+            // Add zoom control to the top-right
+            L.control.zoom({ position: "topright" }).addTo(mapRef.current);
 
-        // Create layer group for markers
-        markersRef.current = L.layerGroup().addTo(mapRef.current);
-      }
-    };
+            // Add attribution control to the bottom-right
+            L.control
+              .attribution({
+                position: "bottomright",
+                prefix:
+                  '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+              })
+              .addTo(mapRef.current);
 
-    // Dynamically import Leaflet.heat when needed
-    const loadHeatmapLibrary = async () => {
-      try {
-        // Only load if we're in the browser and L.heatLayer isn't already defined
-        if (typeof window !== "undefined" && typeof L.heatLayer !== "function") {
-          // Check if it's already available (loaded via script tag)
-          if (typeof L.heatLayer === "function") {
-            setLeafletHeat(true);
-            console.log("Leaflet.heat already loaded via script tag");
-            return;
+            // Add tile layer - using a more modern style
+            L.tileLayer("https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png", {
+              attribution:
+                '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+              maxZoom: 19,
+            }).addTo(mapRef.current);
+
+            // Create layer group for markers
+            markersRef.current = L.layerGroup().addTo(mapRef.current);
           }
 
-          // Otherwise try to import it dynamically
-          await import("leaflet.heat");
-          setLeafletHeat(true);
-          console.log("Leaflet.heat library loaded successfully via dynamic import");
-        } else if (typeof L.heatLayer === "function") {
-          // If it's already available
-          setLeafletHeat(true);
-          console.log("Leaflet.heat found in global scope");
+          // Load heatmap library
+          if (typeof L.heatLayer !== "function") {
+            await import("leaflet.heat");
+            setLeafletHeat(true);
+          } else {
+            setLeafletHeat(true);
+          }
+        } catch (error) {
+          console.error("Error initializing Leaflet:", error);
         }
-      } catch (error) {
-        console.error("Failed to load leaflet.heat:", error);
-        setLeafletHeat(false);
       }
     };
 
-    initializeMap();
-    loadHeatmapLibrary();
+    initializeLeaflet();
 
     // Cleanup function
     return () => {
@@ -138,7 +139,7 @@ export default function MapComponent({
 
   // Update maps with devices/locations when they change
   useEffect(() => {
-    if (!mapRef.current || !markersRef.current) return;
+    if (!isLeafletLoaded || !mapRef.current || !markersRef.current || !L) return;
 
     // Clear existing markers
     markersRef.current.clearLayers();
@@ -419,7 +420,15 @@ export default function MapComponent({
       // If no markers, set default view (world)
       mapRef.current.setView([0, 0], 2);
     }
-  }, [locations, devices, onDeviceSelect, onLocationSelect, showHeatmap, leafletHeat]);
+  }, [
+    locations,
+    devices,
+    onDeviceSelect,
+    onLocationSelect,
+    showHeatmap,
+    leafletHeat,
+    isLeafletLoaded,
+  ]);
 
   return (
     <div style={{ position: "relative", height: "100%", width: "100%" }}>

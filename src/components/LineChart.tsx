@@ -1,7 +1,17 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import { Card, Divider, Spin } from "antd";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
 
 interface LineChartProps {
   title: string;
@@ -25,125 +35,14 @@ export default function LineChartComponent({
   height = 300,
   options = {},
 }: LineChartProps) {
-  const [isClient, setIsClient] = useState(false);
-  const [ChartComponent, setChartComponent] = useState<any>(null);
-
-  useEffect(() => {
-    // Only load Chart.js in the browser
-    const loadChart = async () => {
-      try {
-        if (typeof window !== "undefined") {
-          // Dynamically import Chart.js components
-          const {
-            Chart,
-            CategoryScale,
-            LinearScale,
-            PointElement,
-            LineElement,
-            Title,
-            Tooltip,
-            Legend,
-          } = await import("chart.js");
-          const { Line } = await import("react-chartjs-2");
-
-          // Register Chart.js components
-          Chart.register(
-            CategoryScale,
-            LinearScale,
-            PointElement,
-            LineElement,
-            Title,
-            Tooltip,
-            Legend
-          );
-
-          // Set the Line component
-          setChartComponent(() => Line);
-          setIsClient(true);
-        }
-      } catch (error) {
-        console.error("Failed to load Chart.js:", error);
-      }
-    };
-
-    loadChart();
-  }, []);
-
-  // Default chart options
-  const defaultOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: {
-      legend: {
-        position: "top",
-        labels: {
-          usePointStyle: true,
-          font: {
-            family: "Inter",
-            size: 12,
-          },
-          color: "#4B5563",
-          padding: 20,
-        },
-      },
-      title: {
-        display: false,
-      },
-      tooltip: {
-        backgroundColor: "rgba(255, 255, 255, 0.9)",
-        titleColor: "#111827",
-        bodyColor: "#4B5563",
-        borderColor: "#E5E7EB",
-        borderWidth: 1,
-        padding: 12,
-        boxPadding: 6,
-        usePointStyle: true,
-        bodyFont: {
-          family: "Inter",
-        },
-        titleFont: {
-          family: "Inter",
-          weight: "bold",
-        },
-      },
-    },
-    scales: {
-      y: {
-        beginAtZero: false,
-        grid: {
-          color: "#F3F4F6",
-        },
-        ticks: {
-          color: "#4B5563",
-          padding: 8,
-        },
-        border: {
-          dash: [4, 4],
-        },
-      },
-      x: {
-        grid: {
-          display: false,
-        },
-        ticks: {
-          color: "#4B5563",
-          padding: 8,
-        },
-      },
-    },
-    elements: {
-      point: {
-        radius: 3,
-        hoverRadius: 5,
-      },
-      line: {
-        tension: 0.3,
-        borderWidth: 2,
-      },
-    },
-  };
-
-  const chartOptions = { ...defaultOptions, ...options };
+  // Transform Chart.js data format to recharts format
+  const transformedData = data.labels.map((label, index) => {
+    const dataPoint: any = { name: label };
+    data.datasets.forEach((dataset) => {
+      dataPoint[dataset.label] = dataset.data[index];
+    });
+    return dataPoint;
+  });
 
   return (
     <Card
@@ -152,12 +51,32 @@ export default function LineChartComponent({
     >
       <Divider className="my-1" />
       <div style={{ height: `${height}px` }} className="p-2">
-        {!isClient || !ChartComponent ? (
-          <div className="flex items-center justify-center h-full">
-            <Spin tip="Loading chart..." />
+        {data.datasets.length === 0 ? (
+          <div className="flex flex-col items-center justify-center h-full gap-2">
+            <Spin size="large" />
+            <span className="text-gray-500">Loading chart...</span>
           </div>
         ) : (
-          <ChartComponent data={data} options={chartOptions} />
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={transformedData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="name" />
+              <YAxis />
+              <Tooltip />
+              <Legend />
+              {data.datasets.map((dataset, index) => (
+                <Line
+                  key={dataset.label}
+                  type="monotone"
+                  dataKey={dataset.label}
+                  stroke={dataset.borderColor}
+                  fill={dataset.backgroundColor}
+                  dot={{ r: 3 }}
+                  activeDot={{ r: 5 }}
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
         )}
       </div>
     </Card>

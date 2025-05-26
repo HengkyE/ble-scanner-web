@@ -1,30 +1,19 @@
-import React, { useEffect, useState } from "react";
-import {
-  Chart as ChartJS,
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
-  Tooltip,
-  Legend,
-  TimeScale,
-} from "chart.js";
-import { Line } from "react-chartjs-2";
-import { Spin, Empty, Typography } from "antd";
-import "chartjs-adapter-date-fns";
-import supabase, { safeSupabaseOperation } from "@/lib/supabase";
+"use client";
 
-ChartJS.register(
-  CategoryScale,
-  LinearScale,
-  PointElement,
-  LineElement,
-  Title,
+import React, { useEffect, useState } from "react";
+import { Spin, Empty, Typography } from "antd";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
   Tooltip,
   Legend,
-  TimeScale
-);
+  ResponsiveContainer,
+} from "recharts";
+import { format } from "date-fns";
+import supabase, { safeSupabaseOperation } from "@/lib/supabase";
 
 const { Text } = Typography;
 
@@ -104,70 +93,26 @@ const RssiTimeseriesChart: React.FC<RssiTimeseriesChartProps> = ({
     }
   }, [deviceId, sessionId, timeRange]);
 
-  const chartData = {
-    datasets: [
-      {
-        label: "Signal Strength (RSSI)",
-        data: timeseriesData.map((item) => ({
-          x: new Date(item.timestamp),
-          y: item.rssi,
-        })),
-        borderColor: "rgb(75, 192, 192)",
-        backgroundColor: "rgba(75, 192, 192, 0.5)",
-        borderWidth: 2,
-        tension: 0.2,
-        pointRadius: 3,
-        pointHoverRadius: 7,
-      },
-    ],
-  };
+  // Transform data for recharts
+  const chartData = timeseriesData.map((item) => ({
+    name: format(new Date(item.timestamp), "HH:mm:ss"),
+    rssi: item.rssi,
+    sequence: item.sequence_number,
+    timestamp: item.timestamp,
+  }));
 
-  const chartOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      x: {
-        type: "time" as const,
-        time: {
-          unit: "second" as const,
-          tooltipFormat: "HH:mm:ss.SSS",
-          displayFormats: {
-            second: "HH:mm:ss",
-          },
-        },
-        title: {
-          display: true,
-          text: "Time",
-        },
-      },
-      y: {
-        title: {
-          display: true,
-          text: "RSSI (dBm)",
-        },
-        min: Math.min(-100, ...timeseriesData.map((item) => item.rssi)) - 5,
-        max: Math.max(-30, ...timeseriesData.map((item) => item.rssi)) + 5,
-      },
-    },
-    plugins: {
-      tooltip: {
-        callbacks: {
-          label: (context: any) => {
-            const value = context.parsed.y;
-            const item = timeseriesData[context.dataIndex];
-            const seqNum = item ? `Seq: ${item.sequence_number}` : "";
-            return [`RSSI: ${value} dBm`, seqNum];
-          },
-        },
-      },
-      legend: {
-        position: "top" as const,
-      },
-      title: {
-        display: true,
-        text: `RSSI Values for Device: ${deviceId}`,
-      },
-    },
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload && payload.length) {
+      const data = payload[0].payload;
+      return (
+        <div className="bg-white p-2 border border-gray-200 rounded shadow-sm">
+          <p className="text-sm font-medium">{format(new Date(data.timestamp), "HH:mm:ss.SSS")}</p>
+          <p className="text-sm">RSSI: {data.rssi} dBm</p>
+          <p className="text-sm">Sequence: {data.sequence}</p>
+        </div>
+      );
+    }
+    return null;
   };
 
   if (loading) {
@@ -201,9 +146,32 @@ const RssiTimeseriesChart: React.FC<RssiTimeseriesChartProps> = ({
     );
   }
 
+  const minRssi = Math.min(-100, ...timeseriesData.map((item) => item.rssi)) - 5;
+  const maxRssi = Math.max(-30, ...timeseriesData.map((item) => item.rssi)) + 5;
+
   return (
     <div className="h-[300px] w-full">
-      <Line options={chartOptions} data={chartData} />
+      <ResponsiveContainer width="100%" height={280}>
+        <LineChart data={chartData} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis dataKey="name" label={{ value: "Time", position: "insideBottom", offset: -5 }} />
+          <YAxis
+            domain={[minRssi, maxRssi]}
+            label={{ value: "RSSI (dBm)", angle: -90, position: "insideLeft" }}
+          />
+          <Tooltip content={<CustomTooltip />} />
+          <Legend />
+          <Line
+            type="monotone"
+            dataKey="rssi"
+            name="Signal Strength (RSSI)"
+            stroke="rgb(75, 192, 192)"
+            strokeWidth={2}
+            dot={{ r: 3 }}
+            activeDot={{ r: 5 }}
+          />
+        </LineChart>
+      </ResponsiveContainer>
       <div className="text-xs text-gray-500 mt-2 text-center">
         {timeseriesData.length} data points | Every 0.5 seconds
       </div>
