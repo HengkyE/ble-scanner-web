@@ -240,22 +240,6 @@ export default function Dashboard() {
               </Link>
             </Card>
             <Card className="hover:shadow-md transition-all duration-200">
-              <h3 className="text-lg font-semibold mb-2 text-gray-900">
-                Signal Correlation Analysis
-              </h3>
-              <p className="text-gray-600 mb-4">
-                Analyze the correlation between distance and signal strength for BLE devices.
-              </p>
-              <Link href="/analysis">
-                <Button type="primary" icon={<RightOutlined />}>
-                  View Correlation Analysis
-                </Button>
-              </Link>
-            </Card>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-1 gap-6 mb-6">
-            <Card className="hover:shadow-md transition-all duration-200">
               <h3 className="text-lg font-semibold mb-2 text-gray-900">Location Maps</h3>
               <p className="text-gray-600 mb-4">
                 View BLE devices and scanning locations on an interactive map.
@@ -263,6 +247,32 @@ export default function Dashboard() {
               <Link href="/maps">
                 <Button type="primary" icon={<RightOutlined />}>
                   View Location Maps
+                </Button>
+              </Link>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+            <Card className="hover:shadow-md transition-all duration-200">
+              <h3 className="text-lg font-semibold mb-2 text-gray-900">Compare Locations</h3>
+              <p className="text-gray-600 mb-4">
+                Compare BLE device detection across multiple scanning locations and analyze device
+                overlap patterns.
+              </p>
+              <Link href="/compare">
+                <Button type="primary" icon={<RightOutlined />}>
+                  Compare Scan Results
+                </Button>
+              </Link>
+            </Card>
+            <Card className="hover:shadow-md transition-all duration-200">
+              <h3 className="text-lg font-semibold mb-2 text-gray-900">Water Level Monitoring</h3>
+              <p className="text-gray-600 mb-4">
+                Track and analyze water level measurements collected through BLE sensor technology.
+              </p>
+              <Link href="/water-levels">
+                <Button type="primary" icon={<RightOutlined />}>
+                  View Water Levels
                 </Button>
               </Link>
             </Card>
@@ -277,7 +287,7 @@ export default function Dashboard() {
             </p>
             <p className="text-gray-600 mt-2">
               Use the navigation menu to explore detailed data about devices, signal measurements,
-              and advanced correlation analysis.
+              location mapping, and comparative analysis.
             </p>
           </Card>
         </>
