@@ -43,7 +43,6 @@ import supabase, { safeSupabaseOperation } from "@/lib/supabase";
 import DashboardLayout from "@/components/DashboardLayout";
 import { SortOrder } from "antd/es/table/interface";
 import LineChartComponent from "@/components/LineChart";
-import MultiDeviceComparativeChart from "@/components/MultiDeviceComparativeChart";
 
 const { Title, Text } = Typography;
 const { TabPane } = Tabs;
@@ -2084,20 +2083,6 @@ export default function ComparePage() {
                   ) : (
                     <Empty description="No devices match the selected criteria" />
                   )}
-                </TabPane>
-                <TabPane
-                  tab={
-                    <span>
-                      <LineChartOutlined /> Multi-Device Chart View
-                    </span>
-                  }
-                  key="multi-device-chart"
-                >
-                  <MultiDeviceComparativeChart
-                    selectedLocations={selectedLocations}
-                    locationsData={locationsData}
-                    devicesToDisplay={devicesToDisplay.slice(0, 10)} // Limit to first 10 devices for readability
-                  />
                 </TabPane>
                 <TabPane
                   tab={

@@ -19,7 +19,7 @@ export default function AppNavbar() {
     { key: "/maps", label: "Maps", path: "/maps" },
     { key: "/analysis", label: "Analysis", path: "/analysis" },
     { key: "/compare", label: "Compare", path: "/compare" },
-    { key: "/water-levels", label: "Water Levels", path: "/water-levels" },
+    { key: "/crowd-analysis", label: "Crowd Analysis", path: "/crowd-analysis" },
   ];
 
   const themeItems = [

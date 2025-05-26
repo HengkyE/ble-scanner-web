@@ -268,27 +268,15 @@ export default function Dashboard() {
             </Card>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-6 mb-6">
             <Card className="hover:shadow-md transition-all duration-200">
-              <h3 className="text-lg font-semibold mb-2 text-gray-900">Compare Locations</h3>
+              <h3 className="text-lg font-semibold mb-2 text-gray-900">Crowd Analysis</h3>
               <p className="text-gray-600 mb-4">
-                Compare BLE device detection across multiple scanning locations and analyze device
-                overlap patterns.
+                Analyze crowd data based on BLE device presence at specific locations over time.
               </p>
-              <Link href="/compare">
+              <Link href="/crowd-analysis">
                 <Button type="primary" icon={<RightOutlined />}>
-                  Compare Scan Results
-                </Button>
-              </Link>
-            </Card>
-            <Card className="hover:shadow-md transition-all duration-200">
-              <h3 className="text-lg font-semibold mb-2 text-gray-900">Water Level Monitoring</h3>
-              <p className="text-gray-600 mb-4">
-                Track and analyze water level measurements collected through BLE sensor technology.
-              </p>
-              <Link href="/water-levels">
-                <Button type="primary" icon={<RightOutlined />}>
-                  View Water Levels
+                  View Crowd Analysis
                 </Button>
               </Link>
             </Card>
