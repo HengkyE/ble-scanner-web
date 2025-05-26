@@ -240,6 +240,22 @@ export default function Dashboard() {
               </Link>
             </Card>
             <Card className="hover:shadow-md transition-all duration-200">
+              <h3 className="text-lg font-semibold mb-2 text-gray-900">
+                Signal Correlation Analysis
+              </h3>
+              <p className="text-gray-600 mb-4">
+                Analyze the correlation between distance and signal strength for BLE devices.
+              </p>
+              <Link href="/analysis">
+                <Button type="primary" icon={<RightOutlined />}>
+                  View Correlation Analysis
+                </Button>
+              </Link>
+            </Card>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-1 gap-6 mb-6">
+            <Card className="hover:shadow-md transition-all duration-200">
               <h3 className="text-lg font-semibold mb-2 text-gray-900">Location Maps</h3>
               <p className="text-gray-600 mb-4">
                 View BLE devices and scanning locations on an interactive map.
@@ -287,7 +303,7 @@ export default function Dashboard() {
             </p>
             <p className="text-gray-600 mt-2">
               Use the navigation menu to explore detailed data about devices, signal measurements,
-              location mapping, and comparative analysis.
+              and advanced correlation analysis.
             </p>
           </Card>
         </>

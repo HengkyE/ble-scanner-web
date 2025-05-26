@@ -16,6 +16,15 @@ This web application serves as a dashboard for Bluetooth Low Energy (BLE) device
   - Device statistics dashboard
 - **Theory**: Signal strength degradation over distance (RSSI measurements in dBm)
 
+### Analysis Page
+
+- **Functionality**: Advanced signal analysis for BLE devices
+- **Features**:
+  - Correlation analysis between distance and signal strength
+  - Dual-axis visualization comparing distance and RSSI values
+  - Statistical analysis of signal propagation characteristics
+- **Theory**: Pearson correlation coefficient for signal/distance relationships, environmental signal propagation characteristics
+
 ### Maps Page
 
 - **Functionality**: Geospatial visualization of scanned devices and locations
@@ -58,9 +67,10 @@ This web application serves as a dashboard for Bluetooth Low Energy (BLE) device
 The application is built on several key theoretical principles:
 
 1. **Signal Propagation**: BLE signal strength (RSSI) decreases with distance following an inverse square law, with environmental factors causing variations
-2. **Geospatial Visualization**: Representing signal strength and device density in geographical context
-3. **Environmental Sensing**: Integration of water level measurements with BLE technology for comprehensive environmental monitoring
-4. **Comparative Analysis**: Identifying patterns in device detection across different physical environments
+2. **Correlation Analysis**: Statistical methods to measure relationships between physical distance and signal characteristics
+3. **Geospatial Visualization**: Representing signal strength and device density in geographical context
+4. **Environmental Sensing**: Integration of water level measurements with BLE technology for comprehensive environmental monitoring
+5. **Comparative Analysis**: Identifying patterns in device detection across different physical environments
 
 ## 5. Compare Page (`/compare`)
 
